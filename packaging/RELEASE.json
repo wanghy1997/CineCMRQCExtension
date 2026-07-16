@@ -1,0 +1,19 @@
+{
+  "name": "CineCMRQCExtension",
+  "module": "CineCMRQC",
+  "version": "0.2.1",
+  "release_date": "2026-07-17",
+  "slicer_minimum_version": "5.8.0",
+  "tested_slicer_version": "5.8.1",
+  "dependencies": [
+    "Sequences",
+    "Segmentations",
+    "SegmentEditor",
+    "SimpleITK",
+    "SciPy"
+  ],
+  "installation": [
+    "Extension Wizard",
+    "Additional module paths"
+  ]
+}

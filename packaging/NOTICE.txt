@@ -1,0 +1,11 @@
+Cine CMR QC 0.2.1
+
+This package is intended for research and annotation quality-control workflows.
+It is not a medical device and does not provide a clinical diagnosis.
+
+ED/ES estimates are initialized from label-180 cavity-area extrema and require
+doctor confirmation. Patient ejection fraction is entered manually; the plugin
+does not infer clinical EF from independent single-slice series.
+
+Before deployment, validate image/mask orientation, label semantics, write
+permissions, backup creation, and JSON audit output on local test data.

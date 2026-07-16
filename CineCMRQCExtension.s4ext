@@ -1,0 +1,12 @@
+scm git
+scmurl https://github.com/wanghy1997/CineCMRQCExtension
+scmrevision main
+depends NA
+build_subdirectory .
+homepage https://github.com/wanghy1997/CineCMRQCExtension
+contributors Wang Hongyi, Codex
+category Cardiac
+iconurl https://www.slicer.org/assets/img/3D-Slicer-Mark.svg
+screenshoturls
+description Cine CMR segmentation quality-control workflow for 3D Slicer.
+enabled 1

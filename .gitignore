@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+CineCMRQC/__pycache__/
+Testing/Reports/
+dist/*.zip
+dist/*.zip.sha256
