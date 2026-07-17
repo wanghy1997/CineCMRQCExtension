@@ -2862,7 +2862,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         manifestPath = os.path.join(maskFolder, "manifest.csv") if maskFolder else ""
         if manifestPath and os.path.isfile(manifestPath):
             try:
-                with open(manifestPath, "r", newline="") as fp:
+                with open(manifestPath, "r", encoding="utf-8-sig", newline="") as fp:
                     firstRow = next(csv.DictReader(fp), None)
                 if firstRow:
                     edFrame = int(firstRow.get("end_diastolic_frame", ""))
@@ -3591,7 +3591,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         )
 
         manifestPath = os.path.join(outputFolder, "manifest.csv")
-        with open(manifestPath, "w", newline="") as fp:
+        with open(manifestPath, "w", encoding="utf-8-sig", newline="") as fp:
             writer = csv.DictWriter(
                 fp,
                 fieldnames=[
@@ -3720,7 +3720,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             os.replace(generatedSummaryPath, summaryPath)
             os.replace(os.path.join(temporaryFolder, "labels.csv"), labelsPath)
 
-            with open(temporaryManifestPath, "r", newline="") as fp:
+            with open(temporaryManifestPath, "r", encoding="utf-8-sig", newline="") as fp:
                 reader = csv.DictReader(fp)
                 rows = list(reader)
                 fieldnames = list(reader.fieldnames or [])
@@ -3737,7 +3737,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 temporaryFolder,
                 "manifest_rewritten.csv",
             )
-            with open(replacementManifestPath, "w", newline="") as fp:
+            with open(replacementManifestPath, "w", encoding="utf-8-sig", newline="") as fp:
                 writer = csv.DictWriter(fp, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(rows)
@@ -3795,13 +3795,13 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 seriesFolder,
                 safeSeriesId + "_corrected",
             )
-            with open(manifestPath, "r", newline="") as fp:
+            with open(manifestPath, "r", encoding="utf-8-sig", newline="") as fp:
                 reader = csv.DictReader(fp)
                 if fieldnames is None:
                     fieldnames = list(reader.fieldnames or [])
                 allRows.extend(list(reader))
         patientManifestPath = os.path.join(outputFolder, "patient_manifest.csv")
-        with open(patientManifestPath, "w", newline="") as fp:
+        with open(patientManifestPath, "w", encoding="utf-8-sig", newline="") as fp:
             writer = csv.DictWriter(fp, fieldnames=fieldnames or [])
             writer.writeheader()
             writer.writerows(allRows)
@@ -3890,7 +3890,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             raise ValueError("Segmentation sequence has no frames.")
         segmentationNode = segmentationSequenceNode.GetNthDataNode(0)
         segmentation = segmentationNode.GetSegmentation()
-        with open(outputPath, "w", newline="") as fp:
+        with open(outputPath, "w", encoding="utf-8-sig", newline="") as fp:
             writer = csv.DictWriter(fp, fieldnames=["label_value", "segment_name", "segment_id"])
             writer.writeheader()
             for segmentIndex in range(segmentation.GetNumberOfSegments()):
@@ -4110,7 +4110,7 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
         segmentationSequenceNode = logic.createEmptySegmentationSequence(
             imageSequenceNode,
             browserNode,
-            {1: "LV"},
+            {1: "心腔"},
             "TestMask",
         )
         logic.bindSegmentationSequence(segmentationSequenceNode, browserNode)
@@ -4151,8 +4151,8 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
             segmentationSequenceNode,
             1,
             True,
-            "Dr Test",
-            "Accepted after correction",
+            "测试医生",
+            "中文审核备注",
             "2026-07-16T12:00:00+00:00",
         )
 
@@ -4181,9 +4181,9 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
         self.assertEqual(
             logic.getFrameReviewMetadata(segmentationSequenceNode, 1),
             {
-                "reviewer": "Dr Test",
+                "reviewer": "测试医生",
                 "timestamp": "2026-07-16T12:00:00+00:00",
-                "comment": "Accepted after correction",
+                "comment": "中文审核备注",
             },
         )
         self.assertEqual(logic.findSegmentationSequence(browserNode), segmentationSequenceNode)
@@ -4203,16 +4203,16 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
                 "test_mask",
             )
             self.assertTrue(os.path.isfile(manifestPath))
-            with open(manifestPath, "r", newline="") as fp:
+            with open(manifestPath, "r", encoding="utf-8-sig", newline="") as fp:
                 rows = list(csv.DictReader(fp))
             self.assertEqual(len(rows), 3)
             self.assertEqual(rows[1]["reviewed"], "1")
             self.assertEqual(rows[0]["corrected"], "0")
             self.assertEqual(rows[1]["corrected"], "1")
             self.assertEqual(rows[2]["corrected"], "0")
-            self.assertEqual(rows[1]["reviewer"], "Dr Test")
+            self.assertEqual(rows[1]["reviewer"], "测试医生")
             self.assertEqual(rows[1]["review_timestamp"], "2026-07-16T12:00:00+00:00")
-            self.assertEqual(rows[1]["review_comment"], "Accepted after correction")
+            self.assertEqual(rows[1]["review_comment"], "中文审核备注")
             self.assertEqual(rows[0]["patient_id"], "Patient001")
             self.assertEqual(rows[0]["series_id"], "Series001")
             self.assertEqual(rows[0]["doctor_reference_frames"], "0,2")
@@ -4232,7 +4232,11 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
             self.assertEqual(fourDimensionalImage.GetDimension(), 4)
             self.assertEqual(fourDimensionalImage.GetSize()[3], 3)
             self.assertEqual(int(np.sum(sitk.GetArrayFromImage(fourDimensionalImage))), 1)
-            self.assertTrue(os.path.isfile(os.path.join(outputFolder, "labels.csv")))
+            labelsPath = os.path.join(outputFolder, "labels.csv")
+            self.assertTrue(os.path.isfile(labelsPath))
+            with open(labelsPath, "r", encoding="utf-8-sig", newline="") as fp:
+                labelRows = list(csv.DictReader(fp))
+            self.assertEqual(labelRows[0]["segment_name"], "心腔")
             patientManifestPath = logic.exportPatientSeries(
                 [{
                     "series_id": "Series001",
@@ -4243,10 +4247,10 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
                 os.path.join(outputFolder, "patient_export"),
             )
             self.assertTrue(os.path.isfile(patientManifestPath))
-            with open(patientManifestPath, "r", newline="") as fp:
+            with open(patientManifestPath, "r", encoding="utf-8-sig", newline="") as fp:
                 patientRows = list(csv.DictReader(fp))
             self.assertEqual(len(patientRows), 3)
-            self.assertEqual(patientRows[1]["reviewer"], "Dr Test")
+            self.assertEqual(patientRows[1]["reviewer"], "测试医生")
             self.assertTrue(os.path.isfile(os.path.join(
                 outputFolder,
                 "patient_export",
@@ -4278,7 +4282,7 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
             ))
             self.assertEqual(
                 logic.getFrameReviewMetadata(loadedSegmentationSequence, 1)["reviewer"],
-                "Dr Test",
+                "测试医生",
             )
 
     def _currentSegmentVoxelSum(self, browserNode, segmentationSequenceNode, imageSequenceNode):

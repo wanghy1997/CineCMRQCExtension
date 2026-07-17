@@ -298,7 +298,7 @@ def runRealDataSmokeTest():
             outputFolder,
             "real_data_corrected",
         )
-        with open(manifestPath, "r", newline="") as fp:
+        with open(manifestPath, "r", encoding="utf-8-sig", newline="") as fp:
             manifestRows = list(csv.DictReader(fp))
         if len(manifestRows) != frameCount:
             raise AssertionError("Export manifest frame count is incorrect.")

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16.3...3.19.7 FATAL_ERROR)
 
-project(CineCMRQCExtension VERSION 0.2.1)
+project(CineCMRQCExtension VERSION 0.2.2)
 
 set(EXTENSION_HOMEPAGE "https://github.com/wanghy1997/CineCMRQCExtension")
 set(EXTENSION_CONTRIBUTORS "Wang Hongyi, Codex")

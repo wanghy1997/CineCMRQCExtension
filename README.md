@@ -8,7 +8,7 @@ Build the local-install ZIP with:
 ./scripts/package-cine-cmr-qc.command
 ```
 
-The generated `dist/CineCMRQCExtension-0.2.1.zip` follows the same local
+The generated `dist/CineCMRQCExtension-0.2.2.zip` follows the same local
 Extension Wizard installation pattern documented by MedSAMSlicer. End-user
 instructions are in `docs/PORTABLE_INSTALL_zh-CN.md` and are included in the
 ZIP as `docs/INSTALL_zh-CN.md`.

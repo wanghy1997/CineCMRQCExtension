@@ -90,7 +90,7 @@ def runPatientBatchSmokeTest():
 
     with tempfile.TemporaryDirectory(prefix="CineCMRQC-patient-batch-") as outputFolder:
         patientManifestPath = logic.exportPatientSeries(exportItems, outputFolder)
-        with open(patientManifestPath, "r", newline="") as fp:
+        with open(patientManifestPath, "r", encoding="utf-8-sig", newline="") as fp:
             manifestRows = list(csv.DictReader(fp))
         expectedFrameTotal = sum(entry["image_frame_count"] for entry in readyEntries)
         if len(manifestRows) != expectedFrameTotal:

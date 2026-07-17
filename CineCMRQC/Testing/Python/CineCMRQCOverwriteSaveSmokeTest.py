@@ -55,9 +55,9 @@ def runOverwriteSaveSmokeTest():
 
         labelsPath = os.path.join(temporaryMaskFolder, "labels.csv")
         manifestPath = os.path.join(temporaryMaskFolder, "manifest.csv")
-        with open(labelsPath, "w") as fp:
+        with open(labelsPath, "w", encoding="utf-8-sig") as fp:
             fp.write("legacy-labels-sentinel\n")
-        with open(manifestPath, "w") as fp:
+        with open(manifestPath, "w", encoding="utf-8-sig") as fp:
             fp.write("legacy-manifest-sentinel\n")
 
         imageSequenceNode = logic.loadVolumeSequenceFromPath(
@@ -195,7 +195,7 @@ def runOverwriteSaveSmokeTest():
         if summaryImage.GetDimension() != 4 or summaryImage.GetSize()[3] != frameCount:
             raise AssertionError("The parent summary is not a scalar 4D mask sequence.")
 
-        with open(savedManifestPath, "r", newline="") as fp:
+        with open(savedManifestPath, "r", encoding="utf-8-sig", newline="") as fp:
             manifestRows = list(csv.DictReader(fp))
         if len(manifestRows) != frameCount:
             raise AssertionError("The rewritten manifest has an incorrect frame count.")
