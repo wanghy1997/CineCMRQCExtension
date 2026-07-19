@@ -1,214 +1,39 @@
-# CineCMR Segmentation QC Slicer Extension
+# Cine CMR Segmentation QC for 3D Slicer
 
-## Portable local release
+## 中文
 
-Build the local-install ZIP with:
+### 设计目的
 
-```bash
-./scripts/package-cine-cmr-qc.command
-```
+心脏 Cine MRI 由多个心动时相组成，影像会随时间连续变化，因此分割 Mask 也必须与每一帧一一对应并同步切换。本插件用于在 3D Slicer 中完成动态心脏 MRI 分割结果的逐帧检查、修改、确认和保存，避免将同一个静态 Mask 错误地显示在全部时相上。
 
-The generated `dist/CineCMRQCExtension-0.2.2.zip` follows the same local
-Extension Wizard installation pattern documented by MedSAMSlicer. End-user
-instructions are in `docs/PORTABLE_INSTALL_zh-CN.md` and are included in the
-ZIP as `docs/INSTALL_zh-CN.md`.
+### 核心需求
 
-This repository contains a 3D Slicer scripted module for cine CMR
-segmentation quality control.
+- MRI 时间序列与 Mask 时间序列同步播放、跳转和显示；
+- 每一帧的 Mask 可独立编辑，修改不会影响其他帧；
+- 根据患者目录和 Series ID 自动配对 MRI 与对应分割结果；
+- 切换患者或 Series 时自动隔离上一项的 Mask，避免重叠显示；
+- 为每个 Series 提供舒张末期（ED）和收缩末期（ES）初步判断，并要求医生复核、修改和确认；
+- 有未保存修改或未确认 ED/ES 时阻止切换，避免人工修改丢失；
+- 保存当前 Series 时覆盖对应分割结果并自动备份原文件；
+- 保持原始图像空间方向、Mask 几何和标签值一致；
+- 记录 ED/ES 帧、面积、人工修改帧数、修改时间、保存历史及患者射血分数，便于后续质量分析和复盘。
 
-The module now defaults to a Chinese simplified workflow. Selecting a patient
-folder automatically pairs each canonical series image
-`img/<series>.nii.gz` with `segmentation/<series>/sequence`, and changing the
-series dropdown automatically loads both. Generic manual import and QC
-administration controls remain available by disabling simplified mode.
+## English
 
-The MVP focuses on the workflow that Slicer and MedSAMSlicer do not provide
-as a single turnkey tool for cine CMR correction:
+### Purpose
 
-- load or select a cine image `Volume Sequence`;
-- load predicted label masks as a frame-aligned `Segmentation Sequence`;
-- bind image and segmentation into the same `Sequence Browser`;
-- edit masks frame by frame using an embedded Slicer `Segment Editor`;
-- use Slicer's native playback and frame-seek controls inside the module;
-- switch single-slice cine series to a one-up view aligned with the native
-  oblique acquisition plane and fit the complete image;
-- validate frame counts, time indices, spatial geometry, and frame-specific saving;
-- track reviewed/unreviewed state for each frame;
-- create a built-in synthetic beating-heart cine for immediate GUI testing;
-- scan the project patient-folder convention and include only series selected
-  by doctors under `frames/<series>`;
-- pair each selected series with `img/<series>.nii.gz` and
-  `segmentation/<series>/sequence`, while preserving DICOM `TriggerTime` when
-  available;
-- map the confirmed Huaxi labels `180:心腔 (Cavity)` and
-  `255:心肌 (Myocardium)`;
-- navigate patient series, restore already-loaded series from a saved scene,
-  and synchronize loaded series to the nearest DICOM `TriggerTime`;
-- mark the current frame reviewed and advance in one action, with patient-level
-  reviewed-frame and completed-series progress;
-- store per-frame reviewer, UTC review timestamp, and optional review comment,
-  with persistence through Slicer scene save/reopen;
-- distinguish untouched AI masks from manually corrected frames using a
-  baseline digest of the merged integer labelmap, independently of review state;
-- export corrected masks while preserving image geometry.
-- detect legacy mask NIfTI files that are left-right mirrored relative to the
-  source MedSAM2 PNG, apply one audited correction on import, and leave newly
-  generated aligned masks unchanged;
-- preserve original integer `LabelValue` values such as `180/255` in per-frame
-  and 4D exports instead of re-encoding segments as `1/2`.
-- export all doctor-selected ready patient series into separate folders and
-  combine their frame records into `patient_manifest.csv`.
+Cine cardiac MRI contains multiple cardiac phases, so the segmentation mask must correspond to and change with every image frame. This extension provides a 3D Slicer workflow for frame-by-frame review, correction, confirmation, and saving of temporal cardiac MRI segmentations, preventing one static mask from being incorrectly displayed across the entire sequence.
 
-Detailed Chinese setup and data-format instructions are available in
-[`docs/USER_GUIDE_zh-CN.md`](docs/USER_GUIDE_zh-CN.md).
-The real-data handoff checklist is in
-[`docs/ACCEPTANCE_CHECKLIST_zh-CN.md`](docs/ACCEPTANCE_CHECKLIST_zh-CN.md).
+### Core Requirements
 
-## Design choices
+- Synchronized playback, navigation, and display of MRI and mask sequences;
+- Independent mask editing for each frame without changing other frames;
+- Automatic pairing of MRI series and segmentation results by patient folder and Series ID;
+- Automatic isolation of masks when switching patients or series;
+- Initial end-diastolic (ED) and end-systolic (ES) estimates for each series, followed by mandatory physician review and confirmation;
+- Protection against switching when edits are unsaved or ED/ES phases are unconfirmed;
+- Series-specific saving with automatic backup of the previous segmentation files;
+- Preservation of image orientation, mask geometry, and original label values;
+- Audit records for ED/ES frames and areas, manually modified frames, modification time, save history, and patient ejection fraction.
 
-This module reuses native Slicer capabilities instead of reimplementing them:
-
-- `Sequences` / `Sequence Browser` for playback and synchronized frame
-  switching;
-- `Segmentation Sequence` for frame-specific masks;
-- `Segment Editor` for manual correction;
-- `Segmentations` logic for labelmap/segmentation conversion and export.
-
-MedSAMSlicer is used as a reference for Slicer module organization and the
-idea of keeping segmentation editing inside the module UI. This project does
-not run MedSAM2 inference in the first version; it consumes masks already
-created by MedSAM2 or another server-side pipeline.
-
-## Python / Slicer version
-
-Validated locally with:
-
-- 3D Slicer 5.8.1
-- Slicer's bundled Python 3.9
-
-The module avoids Python 3.10-only syntax and is intended to remain compatible
-with Python 3.8/3.9 style code.
-
-## Install for local testing
-
-1. Open 3D Slicer.
-2. Go to `Edit -> Application Settings -> Modules`.
-3. Add this folder to `Additional module paths`:
-
-   `<解压或克隆目录>/CineCMRQCExtension/CineCMRQC`
-
-4. Restart Slicer.
-5. Open `Modules -> Cardiac -> Cine CMR QC`.
-
-## One-command local launch
-
-Start the module without changing Slicer's permanent settings:
-
-```bash
-./scripts/launch-cine-cmr-qc.command
-```
-
-Open a patient and optional series directly:
-
-```bash
-./scripts/launch-cine-cmr-qc.command /path/to/patient series0015-Body
-```
-
-The launcher uses `/Applications/Slicer.app` by default. Set `SLICER_APP` to
-another `.app` path when needed.
-
-## Automated validation
-
-Run the complete compatibility, Slicer, real-series, patient-batch, and GUI
-suite with:
-
-```bash
-./scripts/run-cine-cmr-qc-tests.command
-```
-
-To include the optional real-data tests without storing a patient path in the
-repository:
-
-```bash
-CINE_PATIENT_PATH=/path/to/test-patient ./scripts/run-cine-cmr-qc-tests.command
-```
-
-Timestamped logs are written under `Testing/Reports/`. If the configured real
-patient folder is unavailable, the runner reports the three real-data tests as
-skipped and only claims that the core tests passed.
-
-## Input formats supported in the MVP
-
-Image input:
-
-- an already-loaded Slicer `vtkMRMLSequenceNode`, usually loaded from DICOM as
-  a Volume Sequence;
-- a folder containing one image frame per file, sorted naturally by filename;
-- a 3D or 4D image file readable by SimpleITK.
-
-Mask input:
-
-- a folder containing one labelmap mask per frame, sorted naturally by filename;
-- a 3D or 4D mask file readable by SimpleITK.
-
-Default label convention:
-
-```text
-1:LV,2:MYO,3:RV
-```
-
-You can change this in the module UI.
-
-## Recommended first GUI test
-
-1. For a no-data smoke test, click `Load Synthetic Cine Demo`; otherwise
-   load a cine MRI as a Slicer `Volume Sequence`.
-2. Open `Modules -> Cardiac -> Cine CMR QC`.
-3. In `Existing image sequence`, choose the loaded image sequence.
-4. Click `Use Selected Image Sequence`.
-5. If you already have predicted masks, choose the mask path and click
-   `Load Mask Sequence And Bind`.
-6. If you want to test manual annotation without predicted masks, click
-   `Create Empty Editable Mask Sequence`.
-7. Use the `Previous` / `Next` buttons or the Slicer Sequence Browser toolbar
-   to move through frames.
-8. Edit masks in the embedded `Segment Editor` panel.
-9. Click `Validate Binding`. Expected result:
-
-   `绑定正常：MRI N 帧，Mask N 帧，已启用逐帧修改保存。`
-
-10. Review the automatically estimated end-diastolic/end-systolic frames, adjust
-    them when needed, and confirm both phases.
-11. The output folder defaults to the loaded series mask folder. Click the dynamic
-    `保存当前 Series：<series ID>（覆盖原 Mask 并备份）` button to replace the original per-frame masks while
-    preserving their filenames and creating a timestamped backup. Choose a different
-    output folder to export a separate copy instead.
-
-Expected export:
-
-```text
-manifest.csv
-labels.csv
-corrected_mask_4d.nii.gz
-corrected_mask_frame000.nii.gz
-corrected_mask_frame001.nii.gz
-...
-```
-
-`manifest.csv` also records temporal index, per-frame review state, source
-paths, corrected mask paths, ED/ES frame indices, automatic/manual source, and
-doctor-confirmation state.
-
-The patient root also contains `cine_cmr_qc_review.json`. It catalogs every
-series, patient-entered EF, ED/ES cavity areas in mm2, first-open/default
-modification time, cumulative manually modified frames, modification ratio, and
-per-save history.
-
-## Current limitations
-
-- DICOM import itself is still handled by Slicer's native DICOM module.
-- Each cine series remains an independent review unit; the extension does not
-  merge basal/middle/apex series into a reconstructed 3D+t volume.
-- ED/ES is estimated from maximum/minimum label-180 cavity area and must be
-  confirmed by a doctor. This per-slice estimate is not EDV/ESV/EF analysis.
-- MedSAM2 inference is intentionally not integrated in this first version.
+如有任何问题或建议，请前往 [Issues](https://github.com/wanghy1997/CineCMRQCExtension/issues)；for questions, feedback, or suggestions, please use [Issues](https://github.com/wanghy1997/CineCMRQCExtension/issues).
