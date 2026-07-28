@@ -34,6 +34,9 @@
 - [ ] 点击播放后 MRI 随心动周期变化。
 - [ ] mask 也逐帧变化，不是同一个静态 mask 贯穿 25 帧。
 - [ ] 拖动 `trigger_time` 后 MRI 和 mask 同时切到同一时相。
+- [ ] 鼠标位于切片视图上时，无修饰键滚轮可逐帧切换 MRI 与 Mask，并能在首尾之间循环。
+- [ ] macOS 的 `Command + 滚轮` 或 Windows 的 `Ctrl + 滚轮`仍执行原生缩放，不会同时切换时间帧。
+- [ ] macOS 的 `Command+D / Command+F` 分别激活 Paint / Erase；Windows 的 `Ctrl+D / Ctrl+F` 行为相同。
 - [ ] 从第 0 帧播放到第 24 帧期间没有 mask 消失、跳帧或错位。
 
 ## D. ED/ES 初判与确认

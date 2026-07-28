@@ -243,12 +243,15 @@ masks/
 
 1. 使用 `播放` 控件播放或暂停。
 2. 使用 `时间 / 帧` 滑块定位具体时间点。
-3. 在 `Embedded Segment Editor` 中选择 `LV`、`MYO` 或 `RV`。
-4. 使用 Slicer 原生的 `Paint`、`Erase`、`Draw`、`Smoothing` 等工具修改当前帧。
-5. 修改完成后切换到下一帧。Sequence Browser 会把修改写回当前 segmentation sequence 项。
-6. 简洁模式只保留修改状态。需要审核元数据时取消勾选 `简洁模式`。
-7. 在 `审核人` 输入姓名，并可填写 `帧备注`。
-8. 审核完当前帧后勾选 `当前帧已审核`；连续审核可点击 `标记已审核并进入下一帧`。
+3. 鼠标位于切片视图上时，直接滚动滚轮即可切换上一帧或下一帧，不需要按任何键；从首帧向前滚会回到末帧，从末帧向后滚会回到首帧。
+4. `Command + 滚轮`（macOS）或 `Ctrl + 滚轮`（Windows）仍由 Slicer 用于缩放，不会触发时间切帧。无修饰键滚轮只在单层 Cine Series 且当前模块为 `Cine CMR QC` 时接管，多层 3D 图像仍保留原生层面滚动。
+5. macOS 按 `Command+D` 可随时激活 `Paint`，按 `Command+F` 激活 `Erase`；Windows 对应 `Ctrl+D` 和 `Ctrl+F`。快捷键只在当前模块为 `Cine CMR QC` 时生效。
+6. 在 `Embedded Segment Editor` 中选择 `LV`、`MYO` 或 `RV`。
+7. 使用 Slicer 原生的 `Paint`、`Erase`、`Draw`、`Smoothing` 等工具修改当前帧。
+8. 修改完成后切换到下一帧。Sequence Browser 会把修改写回当前 segmentation sequence 项。
+9. 简洁模式只保留修改状态。需要审核元数据时取消勾选 `简洁模式`。
+10. 在 `审核人` 输入姓名，并可填写 `帧备注`。
+11. 审核完当前帧后勾选 `当前帧已审核`；连续审核可点击 `标记已审核并进入下一帧`。
 
 `Edit state` 与 `Reviewed` 是两个独立状态：
 

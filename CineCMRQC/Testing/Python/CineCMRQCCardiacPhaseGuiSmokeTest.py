@@ -46,6 +46,59 @@ def runCardiacPhaseGuiSmokeTest():
     if "待确认 ED/ES" not in widget.seriesSaveStateLabel.text:
         raise AssertionError("The save state does not require ED/ES confirmation.")
 
+    initialSaveState = widget.seriesSaveStateLabel.text
+    widget.onJumpToCardiacPhase("ED")
+    widget._onSliceViewMouseWheel(None, "MouseWheelBackwardEvent", -1)
+    if browserNode.GetSelectedItemNumber() != 9:
+        proxyVolume = browserNode.GetProxyNode(imageSequenceNode)
+        raise AssertionError(
+            "Plain mouse wheel did not wrap: frame={0}, module={1}, modifiers={2}, dims={3}.".format(
+                browserNode.GetSelectedItemNumber(),
+                slicer.util.selectedModule(),
+                int(CineCMRQC.qt.QApplication.keyboardModifiers()),
+                proxyVolume.GetImageData().GetDimensions(),
+            )
+        )
+    widget._onSliceViewMouseWheel(None, "MouseWheelForwardEvent", 1)
+    if browserNode.GetSelectedItemNumber() != state["ed_frame"]:
+        raise AssertionError("Plain mouse wheel did not advance to the next cine frame.")
+    if not widget.sliceWheelObservers:
+        raise AssertionError("Slice-view mouse-wheel observers were not installed.")
+    widget.sliceWheelObservers[0][0].InvokeEvent(
+        CineCMRQC.vtk.vtkCommand.MouseWheelForwardEvent
+    )
+    if browserNode.GetSelectedItemNumber() != 1:
+        raise AssertionError("The real slice-view wheel event did not advance cine time.")
+    if widget.seriesSaveStateLabel.text != initialSaveState:
+        raise AssertionError("Mouse-wheel cine navigation changed the save state.")
+
+    if len(widget.segmentEditorShortcuts) != 2:
+        raise AssertionError("Paint and Erase shortcuts were not installed.")
+    expectedModifierName = (
+        "Meta" if CineCMRQC.sys.platform == "darwin" else "Ctrl"
+    )
+    shortcutKeys = [
+        shortcut.key.toString()
+        for shortcut, callback, effectName in widget.segmentEditorShortcuts
+    ]
+    if shortcutKeys != [
+        expectedModifierName + "+D",
+        expectedModifierName + "+F",
+    ]:
+        raise AssertionError(
+            "Paint/Erase shortcut keys are incorrect: {0}".format(shortcutKeys)
+        )
+    widget.segmentEditorShortcuts[0][1]()
+    slicer.app.processEvents()
+    activeEffect = widget.embeddedEditor.activeEffect()
+    if not activeEffect or activeEffect.name != "Paint":
+        raise AssertionError("Command/Ctrl+D did not activate Paint.")
+    widget.segmentEditorShortcuts[1][1]()
+    slicer.app.processEvents()
+    activeEffect = widget.embeddedEditor.activeEffect()
+    if not activeEffect or activeEffect.name != "Erase":
+        raise AssertionError("Command/Ctrl+F did not activate Erase.")
+
     blockedMessages = []
     originalInfoDisplay = slicer.util.infoDisplay
     slicer.util.infoDisplay = lambda message, *args, **kwargs: blockedMessages.append(
@@ -149,6 +202,8 @@ def runCardiacPhaseGuiSmokeTest():
     print("Automatic ED/ES extrema: passed")
     print("Clear-before-reassign interaction: passed")
     print("Doctor confirmation requirement: passed")
+    print("Modifier-free mouse-wheel cine navigation: passed")
+    print("Paint/Erase keyboard shortcuts: passed")
     print("Series-specific dynamic save label: passed")
     print("Unconfirmed and unsaved switch blocking: passed")
 

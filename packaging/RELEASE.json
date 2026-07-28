@@ -1,8 +1,8 @@
 {
   "name": "CineCMRQCExtension",
   "module": "CineCMRQC",
-  "version": "0.2.2",
-  "release_date": "2026-07-17",
+  "version": "0.2.3",
+  "release_date": "2026-07-28",
   "slicer_minimum_version": "5.8.0",
   "tested_slicer_version": "5.8.1",
   "dependencies": [
@@ -15,5 +15,11 @@
   "installation": [
     "Extension Wizard",
     "Additional module paths"
+  ],
+  "highlights": [
+    "Modifier-free cyclic mouse-wheel navigation for single-slice cine frames",
+    "Native Command/Ctrl mouse-wheel zoom remains available",
+    "Command/Ctrl+D activates Paint and Command/Ctrl+F activates Erase",
+    "Version, GitHub address, and contributors are displayed in Help & Acknowledgement"
   ]
 }

@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import ctk
 import qt
@@ -18,6 +19,9 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleTest,
     ScriptedLoadableModuleWidget,
 )
+
+CINE_CMR_QC_VERSION = "0.2.3"
+CINE_CMR_QC_GITHUB_URL = "https://github.com/wanghy1997/CineCMRQCExtension"
 
 
 class CineCMRQC(ScriptedLoadableModule):
@@ -33,8 +37,10 @@ class CineCMRQC(ScriptedLoadableModule):
         自动配对动态心脏 MRI 与逐帧 Mask，在同一时间轴中播放、修改并导出。
         """
         self.parent.acknowledgementText = """
-        本模块复用 3D Slicer 的 Sequences、Segmentations 与 Segment Editor。
-        """
+        <p>本模块复用 3D Slicer 的 Sequences、Segmentations 与 Segment Editor。</p>
+        <p><b>当前版本：</b>v{0}</p>
+        <p><b>GitHub：</b><a href="{1}">{1}</a></p>
+        """.format(CINE_CMR_QC_VERSION, CINE_CMR_QC_GITHUB_URL)
 
 
 class CineCMRQCWidget(ScriptedLoadableModuleWidget):
@@ -68,6 +74,9 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.activePatientSeriesIndex = -1
         self.updatingCardiacPhaseControls = False
         self.updatingPatientEfControl = False
+        self.sliceWheelObservers = []
+        self.observedLayoutManager = None
+        self.segmentEditorShortcuts = []
         self.auditWritingEnabled = os.environ.get(
             "CINE_CMR_QC_DISABLE_AUDIT_WRITE",
             "0",
@@ -89,6 +98,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
         self.layout.addStretch(1)
         self._refreshNodeSelectors()
+        self._observeSliceViewMouseWheels()
+        self._installSegmentEditorShortcuts()
         self._log("已就绪。请选择患者目录，插件会自动匹配并加载影像与分割结果。")
 
     def _buildPatientSection(self):
@@ -400,6 +411,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         form.addRow("确认状态：", self.cardiacPhaseConfirmationLabel)
 
     def cleanup(self):
+        self._removeSegmentEditorShortcuts()
+        self._removeSliceViewMouseWheelObservers()
         self._observeBrowser(None)
         self._observeSegmentationProxy(None)
         if self.embeddedEditor:
@@ -1293,6 +1306,135 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             self.configureEmbeddedSegmentEditor()
             self._updateStatus()
             self._synchronizeLoadedPatientSeries()
+
+    def _observeSliceViewMouseWheels(self):
+        self._removeSliceViewMouseWheelObservers()
+        layoutManager = slicer.app.layoutManager()
+        if not layoutManager:
+            return
+        self.observedLayoutManager = layoutManager
+        layoutManager.layoutChanged.connect(self._onLayoutChanged)
+        for viewName in layoutManager.sliceViewNames():
+            sliceWidget = layoutManager.sliceWidget(viewName)
+            if not sliceWidget:
+                continue
+            interactor = sliceWidget.sliceView().interactorStyle().GetInteractor()
+            if not interactor:
+                continue
+            forwardCallback = (
+                lambda caller, event, step=1: self._onSliceViewMouseWheel(
+                    caller,
+                    event,
+                    step,
+                )
+            )
+            backwardCallback = (
+                lambda caller, event, step=-1: self._onSliceViewMouseWheel(
+                    caller,
+                    event,
+                    step,
+                )
+            )
+            forwardTag = interactor.AddObserver(
+                vtk.vtkCommand.MouseWheelForwardEvent,
+                forwardCallback,
+                1.0,
+            )
+            backwardTag = interactor.AddObserver(
+                vtk.vtkCommand.MouseWheelBackwardEvent,
+                backwardCallback,
+                1.0,
+            )
+            self.sliceWheelObservers.extend([
+                (interactor, forwardTag, forwardCallback),
+                (interactor, backwardTag, backwardCallback),
+            ])
+
+    def _removeSliceViewMouseWheelObservers(self):
+        if self.observedLayoutManager:
+            try:
+                self.observedLayoutManager.layoutChanged.disconnect(
+                    self._onLayoutChanged
+                )
+            except (RuntimeError, TypeError):
+                pass
+        self.observedLayoutManager = None
+        for interactor, observerTag, callback in self.sliceWheelObservers:
+            try:
+                interactor.RemoveObserver(observerTag)
+            except RuntimeError:
+                pass
+        self.sliceWheelObservers = []
+
+    def _onLayoutChanged(self, *args):
+        qt.QTimer.singleShot(0, self._observeSliceViewMouseWheels)
+
+    def _onSliceViewMouseWheel(self, caller, event, step):
+        if not self.sequenceBrowserNode or not self.imageSequenceNode:
+            return
+        if slicer.util.selectedModule() != "CineCMRQC":
+            return
+        if qt.QApplication.keyboardModifiers() != qt.Qt.NoModifier:
+            return
+        proxyVolume = self.sequenceBrowserNode.GetProxyNode(
+            self.imageSequenceNode
+        )
+        imageData = proxyVolume.GetImageData() if proxyVolume else None
+        if not imageData or imageData.GetDimensions()[2] != 1:
+            return
+        numberOfItems = self.sequenceBrowserNode.GetNumberOfItems()
+        if numberOfItems < 2:
+            return
+        currentFrame = self.sequenceBrowserNode.GetSelectedItemNumber()
+        nextFrame = (currentFrame + int(step)) % numberOfItems
+        self.sequenceBrowserNode.SetSelectedItemNumber(nextFrame)
+        slicer.modules.sequences.logic().UpdateProxyNodesFromSequences(
+            self.sequenceBrowserNode
+        )
+
+    def _installSegmentEditorShortcuts(self):
+        self._removeSegmentEditorShortcuts()
+        parent = slicer.util.mainWindow()
+        if not parent:
+            return
+        modifier = "Meta" if sys.platform == "darwin" else "Ctrl"
+        for key, effectName in [("D", "Paint"), ("F", "Erase")]:
+            shortcut = qt.QShortcut(
+                qt.QKeySequence("{0}+{1}".format(modifier, key)),
+                parent,
+            )
+            shortcut.setContext(qt.Qt.ApplicationShortcut)
+            callback = (
+                lambda effectName=effectName: self._activateSegmentEditorEffect(
+                    effectName
+                )
+            )
+            shortcut.activated.connect(callback)
+            self.segmentEditorShortcuts.append((shortcut, callback, effectName))
+
+    def _removeSegmentEditorShortcuts(self):
+        for shortcut, callback, effectName in self.segmentEditorShortcuts:
+            try:
+                shortcut.activated.disconnect(callback)
+            except (RuntimeError, TypeError):
+                pass
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        self.segmentEditorShortcuts = []
+
+    def _activateSegmentEditorEffect(self, effectName):
+        if slicer.util.selectedModule() != "CineCMRQC":
+            return
+        if not self.segmentationSequenceNode or not self.sequenceBrowserNode:
+            self._log("请先加载 Mask Sequence，再使用编辑快捷键。")
+            return
+        self.configureEmbeddedSegmentEditor()
+        self.embeddedEditor.setActiveEffectByName(effectName)
+        activeEffect = self.embeddedEditor.activeEffect()
+        if not activeEffect or activeEffect.name != effectName:
+            slicer.util.errorDisplay(
+                "无法激活 Segment Editor 工具：{0}".format(effectName)
+            )
 
     def onStepFrame(self, step):
         if not self.sequenceBrowserNode:
