@@ -222,13 +222,15 @@ def runGuiViewSmokeTest():
     slicer.app.processEvents()
     if widget.imageSequenceNode.GetAttribute("CineCMRQC.SeriesID") != alternateSeriesId:
         raise AssertionError("Changing the series dropdown did not auto-load its MRI and mask.")
+    if any(node.GetScene() for node in [targetImageSequence, targetSegmentationSequence, targetBrowser]):
+        raise AssertionError("The previous series remained resident after switching.")
+    if len(widget.loadedPatientSeries) != 1:
+        raise AssertionError("More than one patient series remained in the resident cache.")
     alternateSegmentationSequence = widget.segmentationSequenceNode
     alternateBrowser = widget.sequenceBrowserNode
     alternateProxySegmentation = alternateBrowser.GetProxyNode(
         alternateSegmentationSequence
     )
-    if targetProxySegmentation.GetDisplayNode().GetVisibility():
-        raise AssertionError("Previous-series mask remained visible after switching series.")
     if not alternateProxySegmentation.GetDisplayNode().GetVisibility():
         raise AssertionError("Current-series mask is hidden after automatic loading.")
     markCurrentPhaseStateAsSaved(widget)
@@ -236,10 +238,17 @@ def runGuiViewSmokeTest():
     slicer.app.processEvents()
     if widget.imageSequenceNode.GetAttribute("CineCMRQC.SeriesID") != seriesId:
         raise AssertionError("Returning to the target series did not restore its paired data.")
-    if alternateProxySegmentation.GetDisplayNode().GetVisibility():
-        raise AssertionError("Alternate-series mask remained visible after returning.")
+    if any(node.GetScene() for node in [alternateSegmentationSequence, alternateBrowser]):
+        raise AssertionError("The alternate series remained resident after returning.")
+    targetProxySegmentation = widget.sequenceBrowserNode.GetProxyNode(
+        widget.segmentationSequenceNode
+    )
     if not targetProxySegmentation.GetDisplayNode().GetVisibility():
         raise AssertionError("Restored target-series mask is hidden.")
+    # This real-data test must not write the source patient folder. Recreate the
+    # saved-state marker in memory; the dedicated resident-series test verifies
+    # actual manifest-backed restoration using a disposable patient folder.
+    markCurrentPhaseStateAsSaved(widget)
 
     appliedMaskTransform = widget.segmentationSequenceNode.GetAttribute(
         "CineCMRQC.AppliedMaskTransform"
@@ -396,8 +405,8 @@ def runGuiViewSmokeTest():
         secondPatientProxy = widget.sequenceBrowserNode.GetProxyNode(
             widget.segmentationSequenceNode
         )
-        if targetProxySegmentation.GetDisplayNode().GetVisibility():
-            raise AssertionError("First-patient mask remained visible after changing patient.")
+        if targetProxySegmentation.GetScene():
+            raise AssertionError("First-patient mask remained resident after changing patient.")
         if not secondPatientProxy.GetDisplayNode().GetVisibility():
             raise AssertionError("Second-patient current mask is hidden.")
 

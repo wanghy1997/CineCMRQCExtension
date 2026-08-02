@@ -2,12 +2,15 @@
 
 [English](README.md) | [简体中文](README_zh-CN.md)
 
-## What's New in v0.2.3
+## What's New in v0.2.4
 
-- Navigate single-slice cine frames directly with the mouse wheel, including cyclic navigation between the first and last frames;
-- Preserve native Slicer zoom with `Command + wheel` on macOS or `Ctrl + wheel` on Windows;
-- Activate Paint at any time with `Command/Ctrl + D`, and Erase with `Command/Ctrl + F`;
-- Display the current version, GitHub project address, and contributors in Help & Acknowledgement.
+- Load only the first available series initially and load another series only after the physician selects it;
+- Keep only the active patient series resident in the Slicer scene, releasing the previous series after a safe switch;
+- Force-hide managed stale segmentation proxies and display nodes so masks from another series cannot overlay the active image;
+- Reopen a previously saved series without a save prompt when no new annotation, review, or ED/ES changes were made;
+- Track edited-frame candidates incrementally so mouse-wheel cine navigation no longer rescans every frame after an edit;
+- Export all patient series sequentially to avoid retaining every series in memory at once.
+- Keep Slicer's Data Probe panel collapsed by default to preserve vertical space in the module panel.
 
 ## Purpose
 

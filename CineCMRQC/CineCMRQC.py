@@ -20,7 +20,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleWidget,
 )
 
-CINE_CMR_QC_VERSION = "0.2.3"
+CINE_CMR_QC_VERSION = "0.2.4"
 CINE_CMR_QC_GITHUB_URL = "https://github.com/wanghy1997/CineCMRQCExtension"
 
 
@@ -41,6 +41,25 @@ class CineCMRQC(ScriptedLoadableModule):
         <p><b>当前版本：</b>v{0}</p>
         <p><b>GitHub：</b><a href="{1}">{1}</a></p>
         """.format(CINE_CMR_QC_VERSION, CINE_CMR_QC_GITHUB_URL)
+        if not slicer.app.commandOptions().noMainWindow:
+            slicer.app.connect(
+                "startupCompleted()",
+                self._collapseDataProbeAfterStartup,
+            )
+
+    def _collapseDataProbeAfterStartup(self):
+        qt.QTimer.singleShot(0, self.collapseDataProbe)
+
+    @staticmethod
+    def collapseDataProbe():
+        mainWindow = slicer.util.mainWindow()
+        if not mainWindow:
+            return False
+        dataProbe = mainWindow.findChild("QWidget", "DataProbeCollapsibleWidget")
+        if not dataProbe:
+            return False
+        dataProbe.collapsed = True
+        return True
 
 
 class CineCMRQCWidget(ScriptedLoadableModuleWidget):
@@ -63,8 +82,11 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.lastSelectedItemNumber = -1
         self.updatingReviewCheckBox = False
         self.updatingReviewMetadata = False
+        self.processingSegmentationProxyModified = False
+        self.updatingIncrementalDirtyState = False
         self.patientSeriesEntries = []
         self.loadedPatientSeries = {}
+        self.patientSeriesRuntimeState = {}
         self.syncingPatientSeries = False
         self.updatingPatientSeriesComboBox = False
         self.suppressAutomaticSeriesLoad = False
@@ -85,6 +107,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
         self.logic = CineCMRQCLogic()
+        CineCMRQC.collapseDataProbe()
 
         self._buildPatientSection()
         self._buildInputSection()
@@ -172,10 +195,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.patientReviewProgressLabel = qt.QLabel("患者审核进度：0/0 帧")
         form.addRow("审核进度：", self.patientReviewProgressLabel)
 
-        self.syncPatientSeriesCheckBox = qt.QCheckBox("按 TriggerTime 同步已加载 Series")
+        self.syncPatientSeriesCheckBox = qt.QCheckBox("切换 Series 时保持 TriggerTime")
         self.syncPatientSeriesCheckBox.checked = True
         self.syncPatientSeriesCheckBox.toolTip = (
-            "切换帧时，让其他已加载 Series 跳到最接近的心动时相。"
+            "医生主动选择另一个 Series 时，跳转到最接近当前 TriggerTime 的心动时相。"
         )
         form.addRow("时间同步：", self.syncPatientSeriesCheckBox)
         self._registerAdvancedField(form, self.syncPatientSeriesCheckBox)
@@ -519,17 +542,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         maskMayBeDirty = segmentationSequenceNode.GetAttribute(
             "CineCMRQC.MaskMayBeDirty"
         ) == "1"
-        if imageSequenceNode and browserNode:
-            maskMayBeDirty = self.logic.countCorrectedFrames(
-                segmentationSequenceNode,
-                imageSequenceNode,
-                browserNode,
-            ) > 0
-            segmentationSequenceNode.SetAttribute(
-                "CineCMRQC.MaskMayBeDirty",
-                "1" if maskMayBeDirty else "0",
-            )
-        if phaseDirty or maskMayBeDirty:
+        reviewMetadataDirty = segmentationSequenceNode.GetAttribute(
+            "CineCMRQC.ReviewMetadataMayBeDirty"
+        ) == "1"
+        if phaseDirty or maskMayBeDirty or reviewMetadataDirty:
             return "未保存"
         if segmentationSequenceNode.GetAttribute("CineCMRQC.HasBeenSaved") == "1":
             return "已保存"
@@ -691,18 +707,69 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             and self.sequenceBrowserNode
         ):
             return False
-        maskDirty = self.logic.countCorrectedFrames(
-            self.segmentationSequenceNode,
-            self.imageSequenceNode,
-            self.sequenceBrowserNode,
-        ) > 0
+        maskDirty = bool(self._verifiedDirtyFrameIndices())
         self.segmentationSequenceNode.SetAttribute(
             "CineCMRQC.MaskMayBeDirty",
             "1" if maskDirty else "0",
         )
-        return maskDirty or self.logic.isCardiacPhaseStateDirty(
-            self.segmentationSequenceNode
+        reviewMetadataDirty = self.segmentationSequenceNode.GetAttribute(
+            "CineCMRQC.ReviewMetadataMayBeDirty"
+        ) == "1"
+        return (
+            maskDirty
+            or reviewMetadataDirty
+            or self.logic.isCardiacPhaseStateDirty(self.segmentationSequenceNode)
         )
+
+    def _dirtyFrameCandidates(self, segmentationSequenceNode=None):
+        sequenceNode = segmentationSequenceNode or self.segmentationSequenceNode
+        if not sequenceNode:
+            return set()
+        frameCount = sequenceNode.GetNumberOfDataNodes()
+        candidates = set()
+        for value in (sequenceNode.GetAttribute("CineCMRQC.DirtyFrameCandidates") or "").split(","):
+            try:
+                frameIndex = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= frameIndex < frameCount:
+                candidates.add(frameIndex)
+        return candidates
+
+    def _setDirtyFrameCandidates(self, frameIndices, segmentationSequenceNode=None):
+        sequenceNode = segmentationSequenceNode or self.segmentationSequenceNode
+        if not sequenceNode:
+            return
+        normalized = sorted(set(int(value) for value in frameIndices if int(value) >= 0))
+        serialized = ",".join(str(value) for value in normalized)
+        dirtyValue = "1" if normalized else "0"
+        self.updatingIncrementalDirtyState = True
+        try:
+            if (sequenceNode.GetAttribute("CineCMRQC.DirtyFrameCandidates") or "") != serialized:
+                sequenceNode.SetAttribute("CineCMRQC.DirtyFrameCandidates", serialized)
+            if (sequenceNode.GetAttribute("CineCMRQC.MaskMayBeDirty") or "0") != dirtyValue:
+                sequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", dirtyValue)
+        finally:
+            self.updatingIncrementalDirtyState = False
+
+    def _verifiedDirtyFrameIndices(self):
+        if not (
+            self.imageSequenceNode
+            and self.segmentationSequenceNode
+            and self.sequenceBrowserNode
+        ):
+            return []
+        verified = []
+        for frameIndex in sorted(self._dirtyFrameCandidates()):
+            if self.logic.isFrameCorrected(
+                self.segmentationSequenceNode,
+                self.imageSequenceNode,
+                self.sequenceBrowserNode,
+                frameIndex,
+            ):
+                verified.append(frameIndex)
+        self._setDirtyFrameCandidates(verified)
+        return verified
 
     def _restoreActiveSeriesSelection(self):
         if not (0 <= self.activePatientSeriesIndex < len(self.patientSeriesEntries)):
@@ -775,6 +842,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             if activePatientRoot:
                 self.patientPathEdit.currentPath = activePatientRoot
             return
+        self._unloadAllPatientSeries()
         self.logic.setActiveCineSegmentationVisibility(None, None)
         try:
             with slicer.util.tryWithErrorDisplay("扫描患者目录失败。", waitCursor=True):
@@ -891,15 +959,21 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             loadedNodes = self._loadedPatientSeriesNodes(entry)
             if loadedNodes:
                 reviewedCount = self.logic.countReviewedFrames(loadedNodes[1])
-                correctedCount = self.logic.countCorrectedFrames(
-                    loadedNodes[1],
-                    loadedNodes[0],
-                    loadedNodes[2],
+                correctedCount = len(self._dirtyFrameCandidates(loadedNodes[1]))
+            else:
+                runtimeState = self.patientSeriesRuntimeState.get(
+                    self._patientSeriesCacheKey(entry),
+                    {},
                 )
+                reviewedCount = int(runtimeState.get("reviewed_count", 0))
+                correctedCount = int(runtimeState.get("corrected_count", 0))
             phaseSaveState = (
                 self._seriesSaveState(loadedNodes[1])
                 if loadedNodes
-                else "未加载"
+                else self.patientSeriesRuntimeState.get(
+                    self._patientSeriesCacheKey(entry),
+                    {},
+                ).get("save_state", "未加载")
             )
             totalFrameCount += entry["image_frame_count"]
             reviewedFrameCount += reviewedCount
@@ -982,6 +1056,114 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             self.loadedPatientSeries[cacheKey] = loadedNodes
         return loadedNodes
 
+    def _rememberSeriesRuntimeState(self, entry, nodes):
+        if not entry or not nodes:
+            return
+        imageSequenceNode, segmentationSequenceNode, browserNode = nodes
+        self.patientSeriesRuntimeState[self._patientSeriesCacheKey(entry)] = {
+            "reviewed_count": self.logic.countReviewedFrames(segmentationSequenceNode),
+            "corrected_count": len(self._dirtyFrameCandidates(segmentationSequenceNode)),
+            "save_state": self._seriesSaveState(segmentationSequenceNode),
+            "selected_index_value": (
+                imageSequenceNode.GetNthIndexValue(browserNode.GetSelectedItemNumber())
+                if 0 <= browserNode.GetSelectedItemNumber() < imageSequenceNode.GetNumberOfDataNodes()
+                else None
+            ),
+        }
+
+    def _detachSegmentEditorsFromSegmentation(self, segmentationNode):
+        editorWidgets = [self.embeddedEditor] if self.embeddedEditor else []
+        try:
+            representation = slicer.modules.segmenteditor.widgetRepresentation()
+            if representation:
+                globalEditor = representation.self().editor
+                if globalEditor and globalEditor not in editorWidgets:
+                    editorWidgets.append(globalEditor)
+        except (AttributeError, RuntimeError):
+            logging.debug("Global Segment Editor widget is not available.")
+        for editorWidget in editorWidgets:
+            try:
+                hasSegmentationGetter = hasattr(editorWidget, "segmentationNode")
+                currentSegmentation = (
+                    editorWidget.segmentationNode() if hasSegmentationGetter else None
+                )
+                if (
+                    segmentationNode
+                    and hasSegmentationGetter
+                    and currentSegmentation != segmentationNode
+                ):
+                    continue
+                editorWidget.setActiveEffectByName("")
+                editorWidget.setSegmentationNode(None)
+                editorWidget.setSourceVolumeNode(None)
+                editorWidget.setUndoEnabled(False)
+                editorWidget.setUndoEnabled(True)
+            except RuntimeError:
+                logging.debug("Segment Editor was already being destroyed.")
+
+    def _unloadPatientSeries(self, entry, nodes=None):
+        nodes = nodes or self._loadedPatientSeriesNodes(entry)
+        if not nodes:
+            self.loadedPatientSeries.pop(self._patientSeriesCacheKey(entry), None)
+            return
+        imageSequenceNode, segmentationSequenceNode, browserNode = nodes
+        self._rememberSeriesRuntimeState(entry, nodes)
+        proxyNodes = []
+        proxyDisplayNodes = []
+        for sequenceNode in [imageSequenceNode, segmentationSequenceNode]:
+            proxyNode = browserNode.GetProxyNode(sequenceNode) if browserNode else None
+            if proxyNode:
+                proxyNodes.append(proxyNode)
+                if proxyNode.IsA("vtkMRMLSegmentationNode"):
+                    self.logic.setSegmentationNodeVisibility(proxyNode, False)
+                    for displayIndex in range(proxyNode.GetNumberOfDisplayNodes()):
+                        displayNode = proxyNode.GetNthDisplayNode(displayIndex)
+                        if displayNode:
+                            proxyDisplayNodes.append(displayNode)
+
+        if browserNode == self.sequenceBrowserNode:
+            self._observeBrowser(None)
+            self._observeSegmentationProxy(None)
+            segmentationProxy = browserNode.GetProxyNode(segmentationSequenceNode)
+            self._detachSegmentEditorsFromSegmentation(segmentationProxy)
+            self.playWidget.setMRMLSequenceBrowserNode(None)
+            self.seekWidget.setMRMLSequenceBrowserNode(None)
+            self.imageSequenceSelector.blockSignals(True)
+            self.browserSelector.blockSignals(True)
+            try:
+                self.imageSequenceSelector.setCurrentNode(None)
+                self.browserSelector.setCurrentNode(None)
+            finally:
+                self.imageSequenceSelector.blockSignals(False)
+                self.browserSelector.blockSignals(False)
+            self.imageSequenceNode = None
+            self.segmentationSequenceNode = None
+            self.sequenceBrowserNode = None
+
+        for node in [browserNode] + proxyNodes + proxyDisplayNodes + [
+            segmentationSequenceNode,
+            imageSequenceNode,
+        ]:
+            if node and node.GetScene():
+                slicer.mrmlScene.RemoveNode(node)
+        self.loadedPatientSeries.pop(self._patientSeriesCacheKey(entry), None)
+
+    def _unloadAllPatientSeries(self, exceptEntry=None):
+        exceptKey = self._patientSeriesCacheKey(exceptEntry) if exceptEntry else None
+        entriesByKey = {
+            self._patientSeriesCacheKey(entry): entry for entry in self.patientSeriesEntries
+        }
+        for cacheKey, nodes in list(self.loadedPatientSeries.items()):
+            if cacheKey == exceptKey:
+                continue
+            entry = entriesByKey.get(cacheKey, {
+                "patient_path": cacheKey[0],
+                "series_id": cacheKey[1],
+            })
+            self._unloadPatientSeries(entry, nodes)
+        if exceptKey is None:
+            self.activePatientSeriesIndex = -1
+
     def _patientSeriesCacheKey(self, entry):
         return (
             os.path.abspath(entry["patient_path"]),
@@ -1005,7 +1187,16 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             targetIndex = (startIndex + offset) % len(self.patientSeriesEntries)
             entry = self.patientSeriesEntries[targetIndex]
             loadedNodes = self._loadedPatientSeriesNodes(entry)
-            reviewedCount = self.logic.countReviewedFrames(loadedNodes[1]) if loadedNodes else 0
+            reviewedCount = (
+                self.logic.countReviewedFrames(loadedNodes[1])
+                if loadedNodes
+                else int(
+                    self.patientSeriesRuntimeState.get(
+                        self._patientSeriesCacheKey(entry),
+                        {},
+                    ).get("reviewed_count", 0)
+                )
+            )
             if entry["status"] == "ready" and reviewedCount < entry["image_frame_count"]:
                 self.patientSeriesComboBox.setCurrentIndex(targetIndex)
                 return
@@ -1040,6 +1231,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         try:
             with slicer.util.tryWithErrorDisplay("加载所选 Series 及其 Mask 失败。", waitCursor=True):
                 sourceIndexValue = None
+                switchingSeries = (
+                    self.activePatientSeriesIndex >= 0
+                    and selectedIndex != self.activePatientSeriesIndex
+                )
                 if (
                     self.syncPatientSeriesCheckBox.checked
                     and self.imageSequenceNode
@@ -1054,6 +1249,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                             )
                         except (TypeError, ValueError):
                             sourceIndexValue = None
+                if switchingSeries:
+                    currentEntry = self.patientSeriesEntries[self.activePatientSeriesIndex]
+                    self._unloadPatientSeries(currentEntry)
+                    self.activePatientSeriesIndex = -1
                 cachedNodes = self._loadedPatientSeriesNodes(entry)
                 if cachedNodes and all(node and node.GetScene() for node in cachedNodes):
                     imageSequenceNode, segmentationSequenceNode, browserNode = cachedNodes
@@ -1141,6 +1340,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 slicer.modules.sequences.logic().UpdateProxyNodesFromSequences(browserNode)
                 self.configureEmbeddedSegmentEditor()
                 self.activePatientSeriesIndex = selectedIndex
+                self._unloadAllPatientSeries(exceptEntry=entry)
                 self._log(
                     "已自动加载 {0}：MRI/Mask 共 {1} 帧；医生参考帧：{2}；"
                     "Mask 方向={3}；已应用变换={4}。".format(
@@ -1486,6 +1686,12 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             reviewer,
             comment,
         )
+        self.segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.ReviewMetadataMayBeDirty",
+            "1"
+            if self.logic.isReviewMetadataDirty(self.segmentationSequenceNode)
+            else "0",
+        )
         if reviewed and reviewer:
             self.segmentationSequenceNode.SetAttribute(
                 "CineCMRQC.DefaultReviewer",
@@ -1493,38 +1699,9 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             )
 
     def _synchronizeLoadedPatientSeries(self):
-        if (
-            self.syncingPatientSeries
-            or not self.syncPatientSeriesCheckBox.checked
-            or not self.imageSequenceNode
-            or not self.sequenceBrowserNode
-        ):
-            return
-        selectedItem = self.sequenceBrowserNode.GetSelectedItemNumber()
-        if selectedItem < 0:
-            return
-        try:
-            activeIndexValue = float(self.imageSequenceNode.GetNthIndexValue(selectedItem))
-        except (TypeError, ValueError):
-            return
-        self.syncingPatientSeries = True
-        try:
-            for entry in self.patientSeriesEntries:
-                loadedNodes = self._loadedPatientSeriesNodes(entry)
-                if not loadedNodes:
-                    continue
-                imageSequenceNode, segmentationSequenceNode, browserNode = loadedNodes
-                if browserNode == self.sequenceBrowserNode:
-                    continue
-                targetItem = self.logic.findClosestSequenceItem(
-                    imageSequenceNode,
-                    activeIndexValue,
-                )
-                if browserNode.GetSelectedItemNumber() != targetItem:
-                    browserNode.SetSelectedItemNumber(targetItem)
-                    slicer.modules.sequences.logic().UpdateProxyNodesFromSequences(browserNode)
-        finally:
-            self.syncingPatientSeries = False
+        # Only the active series remains resident. Its current TriggerTime is
+        # transferred when the doctor explicitly chooses another series.
+        return
 
     def onOpenSegmentEditor(self):
         self.configureEmbeddedSegmentEditor()
@@ -1576,13 +1753,24 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
     def _onSegmentationProxyModified(self, caller, event):
         if caller not in [self.observedSegmentationProxy, self.observedSegmentationObject]:
             return
+        if self.processingSegmentationProxyModified or self.updatingIncrementalDirtyState:
+            return
+        self.processingSegmentationProxyModified = True
         try:
+            if self.sequenceBrowserNode and self.segmentationSequenceNode:
+                frameIndex = self.sequenceBrowserNode.GetSelectedItemNumber()
+                if frameIndex >= 0:
+                    candidates = self._dirtyFrameCandidates()
+                    candidates.add(frameIndex)
+                    self._setDirtyFrameCandidates(candidates)
             self._updateStatus()
         except RuntimeError:
             logging.debug(
                 "Skipped edit-state refresh while segmentation representation was unavailable.",
                 exc_info=True,
             )
+        finally:
+            self.processingSegmentationProxyModified = False
 
     def onValidate(self):
         try:
@@ -1653,6 +1841,13 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                         "CineCMRQC.MaskMayBeDirty",
                         "0",
                     )
+                    self.segmentationSequenceNode.SetAttribute(
+                        "CineCMRQC.DirtyFrameCandidates",
+                        "",
+                    )
+                    self.logic.initializeReviewMetadataBaseline(
+                        self.segmentationSequenceNode
+                    )
                     auditPath = self._recordCurrentSeriesAudit(
                         event="save",
                         modifiedFrameIndices=modifiedFrameIndices,
@@ -1678,6 +1873,17 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                     self._log("当前 Series 导出完成：{0}".format(manifestPath))
                     if showSuccess:
                         slicer.util.infoDisplay("导出完成：\n{0}".format(manifestPath))
+                    self.segmentationSequenceNode.SetAttribute(
+                        "CineCMRQC.DirtyFrameCandidates",
+                        "",
+                    )
+                    self.segmentationSequenceNode.SetAttribute(
+                        "CineCMRQC.MaskMayBeDirty",
+                        "0",
+                    )
+                    self.logic.initializeReviewMetadataBaseline(
+                        self.segmentationSequenceNode
+                    )
             self._updateStatus()
             if self.patientSeriesEntries:
                 self._refreshPatientSeriesList(True)
@@ -1689,6 +1895,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
     def onExportAllPatientSeries(self):
         if not self.patientSeriesEntries:
             slicer.util.errorDisplay("请先扫描患者目录。")
+            return
+        if self.imageSequenceNode and not self._canLeaveCurrentSeries():
             return
         outputFolder = self.exportPathEdit.currentPath
         if not outputFolder:
@@ -1702,41 +1910,48 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 "批量导出患者 Series 失败。",
                 waitCursor=True,
             ):
-                exportItems = []
+                manifestPaths = []
                 for entryIndex, entry in enumerate(self.patientSeriesEntries):
                     if entry["status"] != "ready":
                         continue
+                    self.patientSeriesComboBox.setCurrentIndex(entryIndex)
+                    self.onLoadSelectedPatientSeries()
                     loadedNodes = self._loadedPatientSeriesNodes(entry)
-                    if not loadedNodes:
-                        self.patientSeriesComboBox.setCurrentIndex(entryIndex)
-                        self.onLoadSelectedPatientSeries()
-                        loadedNodes = self._loadedPatientSeriesNodes(entry)
                     if not loadedNodes:
                         raise ValueError(
                             "无法加载可用 Series：{0}".format(entry["series_id"])
                         )
-                    exportItems.append({
-                        "series_id": entry["series_id"],
-                        "image_sequence": loadedNodes[0],
-                        "segmentation_sequence": loadedNodes[1],
-                        "browser": loadedNodes[2],
-                    })
+                    safeSeriesId = re.sub(
+                        r"[^A-Za-z0-9_.-]+",
+                        "_",
+                        entry["series_id"],
+                    ).strip("._") or "series"
+                    seriesFolder = os.path.join(outputFolder, safeSeriesId)
+                    manifestPaths.append(
+                        self.logic.exportSegmentationSequenceAsLabelmaps(
+                            loadedNodes[1],
+                            loadedNodes[0],
+                            loadedNodes[2],
+                            seriesFolder,
+                            safeSeriesId + "_corrected",
+                        )
+                    )
                     slicer.app.processEvents()
-                if not exportItems:
+                if not manifestPaths:
                     raise ValueError("没有可供导出的医生关注 Series。")
-                manifestPath = self.logic.exportPatientSeries(
-                    exportItems,
+                manifestPath = self.logic.combinePatientSeriesManifests(
+                    manifestPaths,
                     outputFolder,
                 )
                 self._log(
                     "患者批量导出完成：{0} 个 Series；{1}".format(
-                        len(exportItems),
+                        len(manifestPaths),
                         manifestPath,
                     )
                 )
                 slicer.util.infoDisplay(
                     "患者批量导出完成（{0} 个 Series）：\n{1}".format(
-                        len(exportItems),
+                        len(manifestPaths),
                         manifestPath,
                     )
                 )
@@ -1779,23 +1994,12 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                         browser,
                         selected,
                     )
+                    dirtyCandidates = self._dirtyFrameCandidates()
                     if currentCorrected:
-                        self.segmentationSequenceNode.SetAttribute(
-                            "CineCMRQC.MaskMayBeDirty",
-                            "1",
-                        )
-                    elif self.segmentationSequenceNode.GetAttribute(
-                        "CineCMRQC.MaskMayBeDirty"
-                    ) == "1":
-                        anyMaskDirty = self.logic.countCorrectedFrames(
-                            self.segmentationSequenceNode,
-                            self.imageSequenceNode,
-                            browser,
-                        ) > 0
-                        self.segmentationSequenceNode.SetAttribute(
-                            "CineCMRQC.MaskMayBeDirty",
-                            "1" if anyMaskDirty else "0",
-                        )
+                        dirtyCandidates.add(selected)
+                    else:
+                        dirtyCandidates.discard(selected)
+                    self._setDirtyFrameCandidates(dirtyCandidates)
         self.updatingReviewCheckBox = True
         try:
             self.reviewedCheckBox.checked = currentReviewed
@@ -1931,6 +2135,12 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
     def showSegmentationSequence(self, segmentationSequenceNode, browserNode):
         slicer.modules.sequences.logic().UpdateProxyNodesFromSequences(browserNode)
         proxySegmentation = browserNode.GetProxyNode(segmentationSequenceNode)
+        if proxySegmentation:
+            self._tagManagedSegmentationProxy(
+                proxySegmentation,
+                segmentationSequenceNode,
+                browserNode,
+            )
         self.setActiveCineSegmentationVisibility(
             segmentationSequenceNode,
             browserNode,
@@ -1939,9 +2149,62 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             proxySegmentation.CreateDefaultDisplayNodes()
             displayNode = proxySegmentation.GetDisplayNode()
             if displayNode:
-                displayNode.SetVisibility(True)
+                self.setSegmentationNodeVisibility(proxySegmentation, True)
                 displayNode.SetOpacity2DFill(0.45)
                 displayNode.SetOpacity2DOutline(1.0)
+
+    def _tagManagedSegmentationProxy(
+        self,
+        proxySegmentation,
+        segmentationSequenceNode=None,
+        browserNode=None,
+    ):
+        if not proxySegmentation:
+            return
+        proxySegmentation.SetAttribute("CineCMRQC.ManagedSegmentationProxy", "1")
+        for attributeName in ["CineCMRQC.PatientRoot", "CineCMRQC.SeriesID"]:
+            value = ""
+            for sourceNode in [segmentationSequenceNode, browserNode]:
+                if sourceNode and sourceNode.GetAttribute(attributeName):
+                    value = sourceNode.GetAttribute(attributeName)
+                    break
+            if value:
+                proxySegmentation.SetAttribute(attributeName, value)
+        proxySegmentation.CreateDefaultDisplayNodes()
+        for displayIndex in range(proxySegmentation.GetNumberOfDisplayNodes()):
+            displayNode = proxySegmentation.GetNthDisplayNode(displayIndex)
+            if displayNode:
+                displayNode.SetAttribute("CineCMRQC.ManagedSegmentationDisplay", "1")
+
+    def _isManagedCineSegmentation(self, segmentationNode, browserProxyIds=None):
+        if not segmentationNode:
+            return False
+        if segmentationNode.GetAttribute("CineCMRQC.ManagedSegmentationProxy") == "1":
+            return True
+        if browserProxyIds and segmentationNode.GetID() in browserProxyIds:
+            return True
+        segmentation = segmentationNode.GetSegmentation()
+        if not segmentation:
+            return False
+        return any(
+            segmentation.GetSegment(self._stableSegmentId(labelValue)) is not None
+            for labelValue in self.HUAXI_LABELS
+        )
+
+    def setSegmentationNodeVisibility(self, segmentationNode, visible):
+        if not segmentationNode:
+            return
+        segmentationNode.CreateDefaultDisplayNodes()
+        for displayIndex in range(segmentationNode.GetNumberOfDisplayNodes()):
+            displayNode = segmentationNode.GetNthDisplayNode(displayIndex)
+            if not displayNode:
+                continue
+            displayNode.SetVisibility(bool(visible))
+            if hasattr(displayNode, "SetVisibility2D"):
+                displayNode.SetVisibility2D(bool(visible))
+            if hasattr(displayNode, "SetVisibility3D"):
+                displayNode.SetVisibility3D(bool(visible))
+            displayNode.SetAttribute("CineCMRQC.ManagedSegmentationDisplay", "1")
 
     def setActiveCineSegmentationVisibility(
         self,
@@ -1949,8 +2212,20 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         activeBrowserNode,
     ):
         activeProxy = None
+        activeDisplayNodeIds = set()
         if activeSegmentationSequenceNode and activeBrowserNode:
             activeProxy = activeBrowserNode.GetProxyNode(activeSegmentationSequenceNode)
+            if activeProxy:
+                self._tagManagedSegmentationProxy(
+                    activeProxy,
+                    activeSegmentationSequenceNode,
+                    activeBrowserNode,
+                )
+                for displayIndex in range(activeProxy.GetNumberOfDisplayNodes()):
+                    displayNode = activeProxy.GetNthDisplayNode(displayIndex)
+                    if displayNode and displayNode.GetID():
+                        activeDisplayNodeIds.add(displayNode.GetID())
+        browserProxyIds = set()
         for browserNode in slicer.util.getNodesByClass("vtkMRMLSequenceBrowserNode"):
             segmentationSequenceNode = self.findSegmentationSequence(browserNode)
             if not segmentationSequenceNode:
@@ -1958,10 +2233,31 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             proxySegmentation = browserNode.GetProxyNode(segmentationSequenceNode)
             if not proxySegmentation:
                 continue
-            proxySegmentation.CreateDefaultDisplayNodes()
-            displayNode = proxySegmentation.GetDisplayNode()
-            if displayNode:
-                displayNode.SetVisibility(proxySegmentation == activeProxy)
+            if proxySegmentation.GetID():
+                browserProxyIds.add(proxySegmentation.GetID())
+            self._tagManagedSegmentationProxy(
+                proxySegmentation,
+                segmentationSequenceNode,
+                browserNode,
+            )
+        for segmentationNode in slicer.util.getNodesByClass("vtkMRMLSegmentationNode"):
+            if not self._isManagedCineSegmentation(segmentationNode, browserProxyIds):
+                continue
+            self.setSegmentationNodeVisibility(
+                segmentationNode,
+                segmentationNode == activeProxy,
+            )
+        for displayNode in slicer.util.getNodesByClass(
+            "vtkMRMLSegmentationDisplayNode"
+        ):
+            if displayNode.GetAttribute("CineCMRQC.ManagedSegmentationDisplay") != "1":
+                continue
+            if displayNode.GetID() not in activeDisplayNodeIds:
+                displayNode.SetVisibility(False)
+                if hasattr(displayNode, "SetVisibility2D"):
+                    displayNode.SetVisibility2D(False)
+                if hasattr(displayNode, "SetVisibility3D"):
+                    displayNode.SetVisibility3D(False)
 
     def scanPatientFolder(self, patientPath):
         import SimpleITK as sitk
@@ -2643,6 +2939,9 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             "CineCMRQC.BaselineSource",
             "labelmap-import",
         )
+        segmentationSequenceNode.SetAttribute("CineCMRQC.DirtyFrameCandidates", "")
+        segmentationSequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", "0")
+        self.initializeReviewMetadataBaseline(segmentationSequenceNode)
         segmentationSequenceNode.Modified()
         return segmentationSequenceNode
 
@@ -2674,6 +2973,9 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             imageSequenceNode,
             "empty-sequence",
         )
+        segmentationSequenceNode.SetAttribute("CineCMRQC.DirtyFrameCandidates", "")
+        segmentationSequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", "0")
+        self.initializeReviewMetadataBaseline(segmentationSequenceNode)
         return segmentationSequenceNode
 
     def bindSegmentationSequence(self, segmentationSequenceNode, browserNode):
@@ -2760,6 +3062,43 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             for frameIndex in range(segmentationSequenceNode.GetNumberOfDataNodes())
             if self.isFrameReviewed(segmentationSequenceNode, frameIndex)
         )
+
+    def reviewMetadataDigest(self, segmentationSequenceNode):
+        if not segmentationSequenceNode:
+            return ""
+        values = []
+        for frameIndex in range(segmentationSequenceNode.GetNumberOfDataNodes()):
+            frameNode = segmentationSequenceNode.GetNthDataNode(frameIndex)
+            values.append("\x1f".join([
+                frameNode.GetAttribute("CineCMRQC.Reviewed") or "0",
+                frameNode.GetAttribute("CineCMRQC.Reviewer") or "",
+                frameNode.GetAttribute("CineCMRQC.ReviewTimestamp") or "",
+                frameNode.GetAttribute("CineCMRQC.ReviewComment") or "",
+            ]))
+        return hashlib.sha256("\x1e".join(values).encode("utf-8")).hexdigest()
+
+    def initializeReviewMetadataBaseline(self, segmentationSequenceNode):
+        if not segmentationSequenceNode:
+            return
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.ReviewMetadataBaselineDigest",
+            self.reviewMetadataDigest(segmentationSequenceNode),
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.ReviewMetadataMayBeDirty",
+            "0",
+        )
+
+    def isReviewMetadataDirty(self, segmentationSequenceNode):
+        if not segmentationSequenceNode:
+            return False
+        baseline = segmentationSequenceNode.GetAttribute(
+            "CineCMRQC.ReviewMetadataBaselineDigest"
+        )
+        if not baseline:
+            self.initializeReviewMetadataBaseline(segmentationSequenceNode)
+            return False
+        return self.reviewMetadataDigest(segmentationSequenceNode) != baseline
 
     def segmentationFrameDigest(self, segmentationNode, referenceVolumeNode):
         import numpy as np
@@ -3005,7 +3344,30 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         if manifestPath and os.path.isfile(manifestPath):
             try:
                 with open(manifestPath, "r", encoding="utf-8-sig", newline="") as fp:
-                    firstRow = next(csv.DictReader(fp), None)
+                    manifestRows = list(csv.DictReader(fp))
+                firstRow = manifestRows[0] if manifestRows else None
+                for rowIndex, row in enumerate(manifestRows):
+                    try:
+                        frameIndex = int(row.get("frame", rowIndex))
+                    except (TypeError, ValueError):
+                        continue
+                    if not 0 <= frameIndex < frameCount:
+                        continue
+                    frameNode = segmentationSequenceNode.GetNthDataNode(frameIndex)
+                    reviewed = row.get("reviewed", "0") == "1"
+                    frameNode.SetAttribute("CineCMRQC.Reviewed", "1" if reviewed else "0")
+                    frameNode.SetAttribute(
+                        "CineCMRQC.Reviewer",
+                        (row.get("reviewer", "") or None) if reviewed else None,
+                    )
+                    frameNode.SetAttribute(
+                        "CineCMRQC.ReviewTimestamp",
+                        (row.get("review_timestamp", "") or None) if reviewed else None,
+                    )
+                    frameNode.SetAttribute(
+                        "CineCMRQC.ReviewComment",
+                        (row.get("review_comment", "") or None) if reviewed else None,
+                    )
                 if firstRow:
                     edFrame = int(firstRow.get("end_diastolic_frame", ""))
                     esFrame = int(firstRow.get("end_systolic_frame", ""))
@@ -3100,6 +3462,9 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             "CineCMRQC.HasBeenSaved",
             "1" if restored else "0",
         )
+        segmentationSequenceNode.SetAttribute("CineCMRQC.DirtyFrameCandidates", "")
+        segmentationSequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", "0")
+        self.initializeReviewMetadataBaseline(segmentationSequenceNode)
         self.initializeCardiacPhaseBaseline(segmentationSequenceNode)
         segmentationSequenceNode.Modified()
         return self.getCardiacPhaseState(segmentationSequenceNode)
@@ -3920,8 +4285,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             raise ValueError("No patient series were provided for export.")
         if not os.path.isdir(outputFolder):
             os.makedirs(outputFolder)
-        allRows = []
-        fieldnames = None
+        manifestPaths = []
         usedSeriesIds = set()
         for item in seriesItems:
             seriesId = str(item.get("series_id") or "series").strip()
@@ -3937,10 +4301,22 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 seriesFolder,
                 safeSeriesId + "_corrected",
             )
+            manifestPaths.append(manifestPath)
+        return self.combinePatientSeriesManifests(manifestPaths, outputFolder)
+
+    def combinePatientSeriesManifests(self, manifestPaths, outputFolder):
+        if not manifestPaths:
+            raise ValueError("No patient series manifests were provided.")
+        allRows = []
+        fieldnames = None
+        for manifestPath in manifestPaths:
             with open(manifestPath, "r", encoding="utf-8-sig", newline="") as fp:
                 reader = csv.DictReader(fp)
+                currentFieldnames = list(reader.fieldnames or [])
                 if fieldnames is None:
-                    fieldnames = list(reader.fieldnames or [])
+                    fieldnames = currentFieldnames
+                elif currentFieldnames != fieldnames:
+                    raise ValueError("Patient series manifest columns do not match.")
                 allRows.extend(list(reader))
         patientManifestPath = os.path.join(outputFolder, "patient_manifest.csv")
         with open(patientManifestPath, "w", encoding="utf-8-sig", newline="") as fp:

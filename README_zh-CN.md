@@ -2,12 +2,15 @@
 
 [English](README.md) | [简体中文](README_zh-CN.md)
 
-## v0.2.3 新增功能
+## v0.2.4 新增功能
 
-- 鼠标位于单层 Cine 视图时，可直接使用滚轮逐帧切换，并支持首帧与末帧循环衔接；
-- macOS 使用 `Command + 滚轮`、Windows 使用 `Ctrl + 滚轮`时，仍保留 Slicer 原生缩放；
-- 使用 `Command/Ctrl + D` 随时激活 Paint，使用 `Command/Ctrl + F` 激活 Erase；
-- 在 Help & Acknowledgement 中显示当前版本、GitHub 项目地址和贡献者。
+- 扫描患者后默认只加载首个可用 Series，其他 Series 仅在医生主动选择时加载；
+- 安全切换后从 Slicer 场景释放上一 Series，始终只让当前患者 Series 常驻内存；
+- 强制隐藏遗留的分割 Proxy 与 Display Node，避免其他 Series 的 Mask 叠加到当前影像；
+- 已保存 Series 重新打开后，若没有新的标注、审核或 ED/ES 修改，切换时不再提示保存；
+- 使用增量方式记录可能修改的帧，滚轮切帧不再因为一次编辑而重复扫描整套 Mask；
+- 患者全部 Series 导出改为依次加载和导出，避免同时保留全部 Series。
+- Slicer 底部的 Data Probe 面板默认折叠，为插件菜单保留更多纵向空间。
 
 ## 设计目的
 

@@ -4,7 +4,7 @@ set -eu
 
 SCRIPT_DIR="${0:A:h}"
 PROJECT_ROOT="${SCRIPT_DIR:h}"
-VERSION="0.2.3"
+VERSION="0.2.4"
 PACKAGE_NAME="CineCMRQCExtension-${VERSION}"
 DIST_DIR="${PROJECT_ROOT}/dist"
 STAGING_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cine-cmr-qc-package-XXXXXX")

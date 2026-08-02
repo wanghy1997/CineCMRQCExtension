@@ -161,8 +161,18 @@ def runCardiacPhaseGuiSmokeTest():
     widget.logic.markCardiacPhaseStateSaved(segmentationSequenceNode)
     segmentationSequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", "0")
     widget._updateStatus()
-    if not widget._canLeaveCurrentSeries():
-        raise AssertionError("A confirmed and saved series was blocked from switching.")
+    unexpectedPrompts = []
+    originalConfirmDisplay = slicer.util.confirmYesNoDisplay
+    slicer.util.confirmYesNoDisplay = lambda message, *args, **kwargs: (
+        unexpectedPrompts.append(str(message)) or False
+    )
+    try:
+        if not widget._canLeaveCurrentSeries():
+            raise AssertionError("A confirmed and saved series was blocked from switching.")
+    finally:
+        slicer.util.confirmYesNoDisplay = originalConfirmDisplay
+    if unexpectedPrompts:
+        raise AssertionError("A confirmed and saved series triggered a save prompt.")
 
     browserNode.SetSelectedItemNumber(2)
     slicer.modules.sequences.logic().UpdateProxyNodesFromSequences(browserNode)

@@ -1,8 +1,8 @@
 {
   "name": "CineCMRQCExtension",
   "module": "CineCMRQC",
-  "version": "0.2.3",
-  "release_date": "2026-07-28",
+  "version": "0.2.4",
+  "release_date": "2026-08-03",
   "slicer_minimum_version": "5.8.0",
   "tested_slicer_version": "5.8.1",
   "dependencies": [
@@ -17,9 +17,11 @@
     "Additional module paths"
   ],
   "highlights": [
-    "Modifier-free cyclic mouse-wheel navigation for single-slice cine frames",
-    "Native Command/Ctrl mouse-wheel zoom remains available",
-    "Command/Ctrl+D activates Paint and Command/Ctrl+F activates Erase",
-    "Version, GitHub address, and contributors are displayed in Help & Acknowledgement"
+    "Only the active physician-selected series remains resident in memory",
+    "Stale segmentation proxies and display nodes are force-hidden to prevent cross-series overlays",
+    "Saved unchanged series can be revisited without another save prompt",
+    "Incremental edited-frame tracking keeps mouse-wheel navigation responsive",
+    "Whole-patient export processes series sequentially to limit peak memory",
+    "The persistent Data Probe panel is collapsed by default to preserve module-panel space"
   ]
 }

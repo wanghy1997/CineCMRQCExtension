@@ -156,11 +156,11 @@ masks/
 
    `img/<series>.nii.gz` ↔ `segmentation/<series>/sequence/`
 
-7. 在 `动态 Series` 下拉框选择另一个 series 后，MRI、25 帧 Mask、时间轴和编辑器会自动同步切换；不需要再点击加载按钮，也不需要医生浏览目录寻找 Mask。插件会同时隐藏上一 Series 或上一患者的 segmentation proxy，场景中始终只有当前 Mask 可见。若当前 Series 的 ED/ES 尚未确认，则禁止切换；若存在已确认但未保存的 ED/ES 或 Mask 修改，则只能选择“立即保存并继续切换”或取消切换。
+7. 在 `动态 Series` 下拉框选择另一个 series 后，插件才加载其 MRI、25 帧 Mask、时间轴和编辑器；安全切换后会从场景释放上一 Series，并强制隐藏全部遗留分割显示节点，始终只让当前 Series 的 Mask 可见。若当前 Series 的 ED/ES 尚未确认，则禁止切换；若存在已确认但未保存的 ED/ES、审核信息或 Mask 修改，则只能选择“立即保存并继续切换”或取消切换。已经保存过的 Series 重新打开后，若没有新修改，可以直接切换。
 8. 插件自动跳到 `frames/<series>` 文件名表示的医生参考帧。当前患者的参考帧均为第 0 帧。
 9. 使用 `上一个`、`下一个` 也会自动加载相邻 Series。
-10. 高级模式默认按 DICOM `TriggerTime` 同步已经载入的不同 Series；存在轻微时间差时使用最近心动时相。
-11. `审核进度` 汇总医生关注 Series。保存并重新打开 `.mrb` 后，重新扫描患者目录会复用场景中的已编辑节点，不会覆盖已有修改。
+10. 高级模式默认按 DICOM `TriggerTime` 将当前 Series 的心动时相传递给医生主动选择的新 Series；存在轻微时间差时使用最近心动时相。
+11. `审核进度` 汇总医生关注 Series。保存后的 ED/ES 与逐帧审核信息会从 Mask 目录的 `manifest.csv` 恢复。
 
 只有数据不符合上述目录约定时，才取消勾选 `简洁模式`，展开 `高级：手动导入 MRI Sequence` 和 `高级：手动导入或新建 Mask Sequence` 分别指定路径。
 
