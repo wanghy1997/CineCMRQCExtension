@@ -1,8 +1,8 @@
 {
   "name": "CineCMRQCExtension",
   "module": "CineCMRQC",
-  "version": "0.2.4",
-  "release_date": "2026-08-03",
+  "version": "0.2.5",
+  "release_date": "2026-08-07",
   "slicer_minimum_version": "5.8.0",
   "tested_slicer_version": "5.8.1",
   "dependencies": [
@@ -17,11 +17,12 @@
     "Additional module paths"
   ],
   "highlights": [
-    "Only the active physician-selected series remains resident in memory",
-    "Stale segmentation proxies and display nodes are force-hidden to prevent cross-series overlays",
-    "Saved unchanged series can be revisited without another save prompt",
-    "Incremental edited-frame tracking keeps mouse-wheel navigation responsive",
-    "Whole-patient export processes series sequentially to limit peak memory",
-    "The persistent Data Probe panel is collapsed by default to preserve module-panel space"
+    "Physician-selected series can be loaded even when no source Mask exists",
+    "Series loading eligibility is determined by physician reference frames, never by Mask presence",
+    "An empty in-memory segmentation is prepared for image-only series without creating files prematurely",
+    "Physicians can mark a series as annotation-not-required, directly deleting its Mask and recording the decision history in the patient JSON",
+    "Later annotation can recreate the canonical Mask files and append the changed decision to the audit history",
+    "ED/ES confirmation is required only for series that will be saved with annotations",
+    "Whole-patient export skips image-only and annotation-not-required series"
   ]
 }

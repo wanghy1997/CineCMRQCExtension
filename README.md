@@ -2,15 +2,15 @@
 
 [English](README.md) | [简体中文](README_zh-CN.md)
 
-## What's New in v0.2.4
+## What's New in v0.2.5
 
-- Load only the first available series initially and load another series only after the physician selects it;
-- Keep only the active patient series resident in the Slicer scene, releasing the previous series after a safe switch;
-- Force-hide managed stale segmentation proxies and display nodes so masks from another series cannot overlay the active image;
-- Reopen a previously saved series without a save prompt when no new annotation, review, or ED/ES changes were made;
-- Track edited-frame candidates incrementally so mouse-wheel cine navigation no longer rescans every frame after an edit;
-- Export all patient series sequentially to avoid retaining every series in memory at once.
-- Keep Slicer's Data Probe panel collapsed by default to preserve vertical space in the module panel.
+- Load every physician-selected MRI series in the patient batch, whether or not a source Mask exists;
+- Determine loading eligibility from physician reference frames only, excluding unselected mixed or non-target series regardless of Mask state;
+- Prepare an empty in-memory segmentation for image-only series without creating Mask files before the physician saves an annotation;
+- Let the physician mark the current series as annotation-not-required, directly delete its existing Mask, and record the decision and history in the patient JSON;
+- Allow a later physician to annotate the same series again, recreate its canonical Mask files, and retain the decision-change history;
+- Require manual ED/ES selection only when an image-only series is being saved with annotations;
+- Skip image-only and annotation-not-required series during whole-patient Mask export.
 
 ## Purpose
 
@@ -23,10 +23,12 @@ Cine cardiac MRI contains multiple cardiac phases, so the segmentation mask must
 - Module-scoped Command/Ctrl shortcuts for immediate Paint and Erase activation;
 - Independent mask editing for each frame without changing other frames;
 - Automatic pairing of MRI series and segmentation results by patient folder and Series ID;
+- Loading of physician-selected image-only series with an editable empty segmentation;
 - Automatic isolation of masks when switching patients or series;
 - Initial end-diastolic (ED) and end-systolic (ES) estimates for each series, followed by mandatory physician review and confirmation;
 - Protection against switching when edits are unsaved or ED/ES phases are unconfirmed;
 - Series-specific saving with automatic backup of the previous segmentation files;
+- A physician decision for annotation-not-required series that deletes existing Masks and is recoverable later by creating new annotations;
 - Preservation of image orientation, mask geometry, and original label values;
 - Audit records for ED/ES frames and areas, manually modified frames, modification time, save history, and patient ejection fraction.
 

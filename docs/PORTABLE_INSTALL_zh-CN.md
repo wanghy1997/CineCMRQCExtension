@@ -9,12 +9,12 @@
 
 ## 2. 解压发布包
 
-将 `CineCMRQCExtension-0.2.4.zip` 解压到固定目录。安装后不要移动或删除该目录。
+将 `CineCMRQCExtension-0.2.5.zip` 解压到固定目录。安装后不要移动或删除该目录。
 
 正确结构：
 
 ```text
-CineCMRQCExtension-0.2.4/
+CineCMRQCExtension-0.2.5/
   CMakeLists.txt
   RELEASE.json
   NOTICE.txt
@@ -35,7 +35,7 @@ CineCMRQCExtension-0.2.4/
    - 启用开发者模式并重启 Slicer。
 3. 在顶部模块菜单选择 `Developer Tools > Extension Wizard`。
 4. 点击 `Select Extension`。
-5. 选择解压后的扩展根目录 `CineCMRQCExtension-0.2.4`，即包含根 `CMakeLists.txt` 的目录。不要只选里面的 `CineCMRQC` 子目录。
+5. 选择解压后的扩展根目录 `CineCMRQCExtension-0.2.5`，即包含根 `CMakeLists.txt` 的目录。不要只选里面的 `CineCMRQC` 子目录。
 6. 出现“添加模块路径”询问时选择确认。
 7. 重启 Slicer。
 8. 在模块菜单 `Cardiac > Cine CMR 逐帧质控` 中打开插件。
@@ -51,7 +51,7 @@ CineCMRQCExtension-0.2.4/
 3. 选择解压目录中的 `CineCMRQC` 子目录：
 
    ```text
-   <解压目录>/CineCMRQCExtension-0.2.4/CineCMRQC
+   <解压目录>/CineCMRQCExtension-0.2.5/CineCMRQC
    ```
 
 4. 确认设置并重启 Slicer。

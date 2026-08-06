@@ -20,7 +20,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleWidget,
 )
 
-CINE_CMR_QC_VERSION = "0.2.4"
+CINE_CMR_QC_VERSION = "0.2.5"
 CINE_CMR_QC_GITHUB_URL = "https://github.com/wanghy1997/CineCMRQCExtension"
 
 
@@ -95,6 +95,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.simpleModeAdvancedFields = []
         self.activePatientSeriesIndex = -1
         self.updatingCardiacPhaseControls = False
+        self.updatingAnnotationDecisionControl = False
         self.updatingPatientEfControl = False
         self.sliceWheelObservers = []
         self.observedLayoutManager = None
@@ -429,6 +430,16 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.confirmCardiacPhasesButton.clicked.connect(self.onConfirmCardiacPhases)
         form.addRow("", self.confirmCardiacPhasesButton)
 
+        self.annotationNotRequiredButton = qt.QPushButton("当前 Series 无需标注")
+        self.annotationNotRequiredButton.checkable = True
+        self.annotationNotRequiredButton.toolTip = (
+            "医生确认后删除当前 Series 已有 Mask，并将“无需标注”决定写入患者 JSON。"
+        )
+        self.annotationNotRequiredButton.toggled.connect(
+            self.onAnnotationNotRequiredToggled
+        )
+        form.addRow("医生决定：", self.annotationNotRequiredButton)
+
         self.cardiacPhaseConfirmationLabel = qt.QLabel("状态：待医生确认")
         self.cardiacPhaseConfirmationLabel.wordWrap = True
         form.addRow("确认状态：", self.cardiacPhaseConfirmationLabel)
@@ -527,9 +538,155 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             return ""
         return self.imageSequenceNode.GetAttribute("CineCMRQC.SeriesID") or ""
 
+    def _annotationDecision(self, segmentationSequenceNode=None):
+        sequenceNode = segmentationSequenceNode or self.segmentationSequenceNode
+        if not sequenceNode:
+            return "undecided"
+        # Legacy, demo, and manually imported sequences predate this attribute
+        # and already belong to the annotation-required workflow. Image-only
+        # patient series are explicitly initialized as "undecided" on load.
+        decision = sequenceNode.GetAttribute("CineCMRQC.AnnotationDecision") or "required"
+        return decision if decision in ["undecided", "required", "not_required"] else "undecided"
+
+    def _annotationDecisionIsSaved(self, segmentationSequenceNode=None):
+        sequenceNode = segmentationSequenceNode or self.segmentationSequenceNode
+        if not sequenceNode:
+            return False
+        savedAttribute = sequenceNode.GetAttribute(
+            "CineCMRQC.AnnotationDecisionSaved"
+        )
+        if savedAttribute is None:
+            return self._annotationDecision(sequenceNode) == "required"
+        return savedAttribute == "1"
+
+    def _markCurrentSeriesAnnotationRequired(self):
+        if not self.segmentationSequenceNode:
+            return
+        if self._annotationDecision() == "required":
+            return
+        self.segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.AnnotationDecision",
+            "required",
+        )
+        self.segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.AnnotationDecisionSaved",
+            "0",
+        )
+        self.segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.RequireCardiacPhaseConfirmation",
+            "1",
+        )
+        self.segmentationSequenceNode.Modified()
+        self._refreshCardiacPhaseControls()
+        self._updateSaveControls()
+
+    def onAnnotationNotRequiredToggled(self, checked):
+        if self.updatingAnnotationDecisionControl:
+            return
+        if not self.segmentationSequenceNode or not self.imageSequenceNode:
+            self._setAnnotationNotRequiredButton(False)
+            return
+        if checked:
+            confirmed = slicer.util.confirmYesNoDisplay(
+                "确认不需要标注吗？",
+                windowTitle="确认",
+            )
+            if not confirmed:
+                self._setAnnotationNotRequiredButton(False)
+                return
+            self._saveAnnotationNotRequiredDecision()
+            return
+        if self._annotationDecision() == "not_required":
+            self._markCurrentSeriesAnnotationRequired()
+
+    def _setAnnotationNotRequiredButton(self, checked):
+        if not hasattr(self, "annotationNotRequiredButton"):
+            return
+        self.updatingAnnotationDecisionControl = True
+        try:
+            self.annotationNotRequiredButton.checked = bool(checked)
+        finally:
+            self.updatingAnnotationDecisionControl = False
+
+    def _saveAnnotationNotRequiredDecision(self):
+        patientRoot = self.imageSequenceNode.GetAttribute("CineCMRQC.PatientRoot") or ""
+        seriesId = self._currentSeriesId()
+        if not patientRoot or not seriesId:
+            self._setAnnotationNotRequiredButton(False)
+            slicer.util.errorDisplay("仅患者目录工作流支持保存“无需标注”决定。")
+            return False
+        if not self.auditWritingEnabled:
+            self._setAnnotationNotRequiredButton(False)
+            slicer.util.errorDisplay("患者 JSON 写入当前已禁用，不能删除 Mask。")
+            return False
+        try:
+            with slicer.util.tryWithErrorDisplay(
+                "保存“无需标注”决定失败。",
+                waitCursor=True,
+            ):
+                result = self.logic.deleteSeriesMasksAndRecordDecision(
+                    patientRoot,
+                    seriesId,
+                    self.reviewerEdit.text.strip(),
+                )
+                self.processingSegmentationProxyModified = True
+                try:
+                    self.logic.clearSegmentationSequence(
+                        self.segmentationSequenceNode,
+                        self.imageSequenceNode,
+                        self.sequenceBrowserNode,
+                        self.logic.HUAXI_LABELS,
+                    )
+                finally:
+                    self.processingSegmentationProxyModified = False
+                self.logic.setAnnotationDecisionState(
+                    self.segmentationSequenceNode,
+                    "not_required",
+                    saved=True,
+                )
+                self.segmentationSequenceNode.SetAttribute(
+                    "CineCMRQC.SourceMaskExists",
+                    "0",
+                )
+                self.segmentationSequenceNode.SetAttribute(
+                    "CineCMRQC.SourceMaskFolder",
+                    os.path.join(patientRoot, "segmentation", seriesId, "sequence"),
+                )
+                if 0 <= self.activePatientSeriesIndex < len(self.patientSeriesEntries):
+                    entry = self.patientSeriesEntries[self.activePatientSeriesIndex]
+                    entry["mask_frame_count"] = 0
+                    entry["mask_orientation"] = "not-available"
+                    entry["status"] = "ready"
+                    entry["annotation_decision"] = "not_required"
+                self._setDirtyFrameCandidates([])
+                self.logic.initializeReviewMetadataBaseline(self.segmentationSequenceNode)
+                self._refreshCardiacPhaseControls()
+                self._updateStatus()
+                self._refreshPatientSeriesList(True)
+                deletedText = "\n".join(result.get("deleted_paths", [])) or "无已有 Mask 文件"
+                self._log("{0} 已判定为无需标注；Mask 已删除。".format(seriesId))
+                slicer.util.infoDisplay(
+                    "医生决定已保存：当前 Series 无需标注。\n\n已删除：\n{0}\n\n患者 JSON：\n{1}".format(
+                        deletedText,
+                        result["audit_path"],
+                    )
+                )
+                return True
+        except Exception as exc:
+            self._setAnnotationNotRequiredButton(False)
+            slicer.util.errorDisplay(str(exc))
+            return False
+
     def _seriesSaveState(self, segmentationSequenceNode, imageSequenceNode=None, browserNode=None):
         if not segmentationSequenceNode:
             return "尚未加载"
+        if self._annotationDecision(segmentationSequenceNode) == "undecided":
+            return "待医生决定"
+        if (
+            self._annotationDecision(segmentationSequenceNode) == "not_required"
+            and self._annotationDecisionIsSaved(segmentationSequenceNode)
+        ):
+            return "已保存：无需标注"
         phaseState = self.logic.getCardiacPhaseState(segmentationSequenceNode)
         if (
             segmentationSequenceNode.GetAttribute(
@@ -585,6 +742,13 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             if self.sequenceBrowserNode
             else -1
         )
+        annotationNotRequired = self._annotationDecision() == "not_required"
+        self._setAnnotationNotRequiredButton(annotationNotRequired)
+        self.annotationNotRequiredButton.text = (
+            "已判定无需标注（点击恢复标注）"
+            if annotationNotRequired
+            else "当前 Series 无需标注"
+        )
 
         def sourceText(source):
             return {
@@ -605,9 +769,13 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 sourceText(source),
             )
 
-        self.cardiacPhaseSummaryLabel.text = "舒张末期 ED：{0}\n收缩末期 ES：{1}".format(
-            frameText(state["ed_frame"], state["ed_source"]),
-            frameText(state["es_frame"], state["es_source"]),
+        self.cardiacPhaseSummaryLabel.text = (
+            "医生决定：当前 Series 无需标注；ED / ES 不适用。"
+            if annotationNotRequired
+            else "舒张末期 ED：{0}\n收缩末期 ES：{1}".format(
+                frameText(state["ed_frame"], state["ed_source"]),
+                frameText(state["es_frame"], state["es_source"]),
+            )
         )
         self.updatingCardiacPhaseControls = True
         try:
@@ -615,20 +783,32 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             self.endSystolicButton.checked = currentFrame == state["es_frame"]
         finally:
             self.updatingCardiacPhaseControls = False
-        self.jumpToEndDiastolicButton.enabled = state["ed_frame"] >= 0
-        self.jumpToEndSystolicButton.enabled = state["es_frame"] >= 0
+        self.endDiastolicButton.enabled = not annotationNotRequired
+        self.endSystolicButton.enabled = not annotationNotRequired
+        self.jumpToEndDiastolicButton.enabled = (
+            not annotationNotRequired and state["ed_frame"] >= 0
+        )
+        self.jumpToEndSystolicButton.enabled = (
+            not annotationNotRequired and state["es_frame"] >= 0
+        )
         canConfirm = (
             0 <= state["ed_frame"] < frameCount
             and 0 <= state["es_frame"] < frameCount
             and state["ed_frame"] != state["es_frame"]
         )
-        self.confirmCardiacPhasesButton.enabled = canConfirm and not state["confirmed"]
+        self.confirmCardiacPhasesButton.enabled = (
+            not annotationNotRequired and canConfirm and not state["confirmed"]
+        )
         self.confirmCardiacPhasesButton.text = (
             "ED / ES 已确认"
             if state["confirmed"]
             else "确认当前 Series 的 ED / ES"
         )
-        if state["confirmed"]:
+        if annotationNotRequired:
+            self.cardiacPhaseConfirmationLabel.text = (
+                "已保存“无需标注”决定，可直接进入下一个 Series。"
+            )
+        elif state["confirmed"]:
             self.cardiacPhaseConfirmationLabel.text = "已由医生确认，时间：{0}".format(
                 state["confirmed_at"]
             )
@@ -648,6 +828,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             return
         if not self.segmentationSequenceNode or not self.sequenceBrowserNode:
             return
+        if checked:
+            self._markCurrentSeriesAnnotationRequired()
         frameIndex = self.sequenceBrowserNode.GetSelectedItemNumber()
         state = self.logic.getCardiacPhaseState(self.segmentationSequenceNode)
         assignedFrame = state["ed_frame"] if phase == "ED" else state["es_frame"]
@@ -693,6 +875,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def onConfirmCardiacPhases(self):
         try:
+            self._markCurrentSeriesAnnotationRequired()
             self.logic.confirmCardiacPhaseFrames(self.segmentationSequenceNode)
             self._refreshCardiacPhaseControls()
             self._updateSaveControls()
@@ -715,10 +898,12 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         reviewMetadataDirty = self.segmentationSequenceNode.GetAttribute(
             "CineCMRQC.ReviewMetadataMayBeDirty"
         ) == "1"
+        decisionDirty = not self._annotationDecisionIsSaved()
         return (
             maskDirty
             or reviewMetadataDirty
             or self.logic.isCardiacPhaseStateDirty(self.segmentationSequenceNode)
+            or decisionDirty
         )
 
     def _dirtyFrameCandidates(self, segmentationSequenceNode=None):
@@ -783,6 +968,17 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
     def _canLeaveCurrentSeries(self):
         if not self.segmentationSequenceNode:
             return True
+        if (
+            self._annotationDecision() == "not_required"
+            and self._annotationDecisionIsSaved()
+        ):
+            return True
+        if self._annotationDecision() == "undecided":
+            slicer.util.infoDisplay(
+                "当前 Series 尚未完成标注需求判断。\n\n"
+                "如需标注，请人工指定 ED/ES 并保存；如无需标注，请点击“当前 Series 无需标注”。"
+            )
+            return False
         phaseState = self.logic.getCardiacPhaseState(self.segmentationSequenceNode)
         if (
             self.segmentationSequenceNode.GetAttribute(
@@ -854,6 +1050,13 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                         scanResult["series"],
                     )
                 patientAudit = self.logic.loadPatientAudit(patientPath)
+                auditSeriesRecords = patientAudit.get("series", {})
+                for entry in scanResult["series"]:
+                    record = auditSeriesRecords.get(entry["series_id"], {})
+                    entry["annotation_decision"] = record.get(
+                        "annotation_decision",
+                        "required" if entry["mask_frame_count"] else "undecided",
+                    )
                 self.updatingPatientEfControl = True
                 try:
                     efValue = patientAudit.get("ejection_fraction_percent")
@@ -863,7 +1066,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 finally:
                     self.updatingPatientEfControl = False
                 self.patientSeriesEntries = [
-                    entry for entry in scanResult["series"] if entry["doctor_selected"]
+                    entry for entry in scanResult["series"] if entry["load_eligible"]
                 ]
                 self._refreshPatientSeriesList(False)
                 self.patientSummaryLabel.text = (
@@ -931,6 +1134,11 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         if not patientRoot or not seriesId:
             return ""
         try:
+            if event == "save" and self.reviewerEdit.text.strip():
+                self.segmentationSequenceNode.SetAttribute(
+                    "CineCMRQC.DefaultReviewer",
+                    self.reviewerEdit.text.strip(),
+                )
             return self.logic.updatePatientSeriesAudit(
                 patientRoot,
                 seriesId,
@@ -977,11 +1185,17 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             )
             totalFrameCount += entry["image_frame_count"]
             reviewedFrameCount += reviewedCount
-            if entry["image_frame_count"] > 0 and reviewedCount == entry["image_frame_count"]:
+            if (
+                entry.get("annotation_decision") == "not_required"
+                or (
+                    entry["image_frame_count"] > 0
+                    and reviewedCount == entry["image_frame_count"]
+                )
+            ):
                 completedSeriesCount += 1
             displayText = (
                 "{0} | 参考帧 {1} | Mask {2}/{3} | 已审核 {4}/{3} | "
-                "已修改 {5}/{3} | {6} | 保存：{7} | {8}"
+                "已修改 {5}/{3} | {6} | 保存：{7} | {8} | {9}"
             ).format(
                 entry["series_id"],
                 referenceText,
@@ -992,6 +1206,9 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 self._statusDisplayText(entry["status"]),
                 phaseSaveState,
                 self._orientationDisplayText(entry["mask_orientation"]),
+                self._annotationDecisionDisplayText(
+                    entry.get("annotation_decision", "undecided")
+                ),
             )
             self.patientSeriesComboBox.addItem(displayText)
         if self.patientSeriesEntries:
@@ -1028,6 +1245,13 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             "rotated-180": "检测到 180 度旋转",
             "unknown": "方向未知",
         }.get(orientation, orientation)
+
+    def _annotationDecisionDisplayText(self, decision):
+        return {
+            "required": "需要标注",
+            "not_required": "无需标注",
+            "undecided": "待医生决定",
+        }.get(decision, "待医生决定")
 
     def _onPatientSeriesSelectionChanged(self, *args):
         if (
@@ -1186,6 +1410,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         for offset in range(1, len(self.patientSeriesEntries) + 1):
             targetIndex = (startIndex + offset) % len(self.patientSeriesEntries)
             entry = self.patientSeriesEntries[targetIndex]
+            if entry.get("annotation_decision") == "not_required":
+                continue
             loadedNodes = self._loadedPatientSeriesNodes(entry)
             reviewedCount = (
                 self.logic.countReviewedFrames(loadedNodes[1])
@@ -1267,19 +1493,35 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                         indexUnit=entry["time_index_unit"],
                     )
                     browserNode = self.logic.getOrCreateBrowserForSequence(imageSequenceNode)
-                    segmentationSequenceNode = self.logic.loadSegmentationSequenceFromMaskPath(
-                        entry["mask_path"],
-                        imageSequenceNode,
-                        browserNode,
-                        labels,
-                        entry["series_id"] + "Mask",
-                        self.useImageGeometryCheckBox.checked,
-                        self.autoDetectLabelsCheckBox.checked,
-                        (
-                            self.flipMasksLeftRightCheckBox.checked
-                            or entry["mask_orientation"] == "legacy-left-right-flipped"
-                        ),
-                    )
+                    if entry["mask_frame_count"]:
+                        segmentationSequenceNode = self.logic.loadSegmentationSequenceFromMaskPath(
+                            entry["mask_path"],
+                            imageSequenceNode,
+                            browserNode,
+                            labels,
+                            entry["series_id"] + "Mask",
+                            self.useImageGeometryCheckBox.checked,
+                            self.autoDetectLabelsCheckBox.checked,
+                            (
+                                self.flipMasksLeftRightCheckBox.checked
+                                or entry["mask_orientation"] == "legacy-left-right-flipped"
+                            ),
+                        )
+                        segmentationSequenceNode.SetAttribute(
+                            "CineCMRQC.SourceMaskExists",
+                            "1",
+                        )
+                    else:
+                        segmentationSequenceNode = self.logic.createEmptySegmentationSequence(
+                            imageSequenceNode,
+                            browserNode,
+                            labels,
+                            entry["series_id"] + "MaskEmpty",
+                        )
+                        segmentationSequenceNode.SetAttribute(
+                            "CineCMRQC.SourceMaskExists",
+                            "0",
+                        )
                     self.logic.bindSegmentationSequence(segmentationSequenceNode, browserNode)
                     for node in [imageSequenceNode, segmentationSequenceNode, browserNode]:
                         node.SetAttribute("CineCMRQC.PatientRoot", entry["patient_path"])
@@ -1305,14 +1547,29 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                     "CineCMRQC.SourceMaskFolder",
                     os.path.abspath(entry["mask_path"]),
                 )
+                auditRecord = self.logic.patientSeriesAuditRecord(
+                    entry["patient_path"],
+                    entry["series_id"],
+                )
                 if not segmentationSequenceNode.GetAttribute(
                     "CineCMRQC.RequireCardiacPhaseConfirmation"
                 ):
-                    self.logic.initializeCardiacPhaseState(
-                        segmentationSequenceNode,
-                        imageSequenceNode,
-                        entry["mask_path"],
-                    )
+                    if entry["mask_frame_count"]:
+                        self.logic.initializeCardiacPhaseState(
+                            segmentationSequenceNode,
+                            imageSequenceNode,
+                            entry["mask_path"],
+                        )
+                    else:
+                        self.logic.initializeCardiacPhaseStateWithoutMask(
+                            segmentationSequenceNode,
+                            auditRecord,
+                        )
+                self.logic.restoreAnnotationDecisionState(
+                    segmentationSequenceNode,
+                    auditRecord,
+                    hasSourceMask=bool(entry["mask_frame_count"]),
+                )
 
                 self.imageSequenceSelector.setCurrentNode(imageSequenceNode)
                 self._setActiveImageSequence(imageSequenceNode, browserNode)
@@ -1763,6 +2020,17 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                     candidates = self._dirtyFrameCandidates()
                     candidates.add(frameIndex)
                     self._setDirtyFrameCandidates(candidates)
+                    if (
+                        self._annotationDecision() != "required"
+                        and self.imageSequenceNode
+                        and self.logic.isFrameCorrected(
+                            self.segmentationSequenceNode,
+                            self.imageSequenceNode,
+                            self.sequenceBrowserNode,
+                            frameIndex,
+                        )
+                    ):
+                        self._markCurrentSeriesAnnotationRequired()
             self._updateStatus()
         except RuntimeError:
             logging.debug(
@@ -1791,6 +2059,16 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         if not self.imageSequenceNode or not self.segmentationSequenceNode or not self.sequenceBrowserNode:
             slicer.util.errorDisplay("导出前必须先加载并绑定 MRI 与 Mask Sequence。")
             return False
+        if (
+            self._annotationDecision() == "not_required"
+            and self._annotationDecisionIsSaved()
+        ):
+            if showSuccess:
+                slicer.util.infoDisplay(
+                    "当前 Series 已保存为“无需标注”，没有需要写入的 Mask。"
+                )
+            return True
+        self._markCurrentSeriesAnnotationRequired()
         phaseState = self.logic.getCardiacPhaseState(self.segmentationSequenceNode)
         if (
             self.segmentationSequenceNode.GetAttribute(
@@ -1802,7 +2080,15 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 "保存前必须由医生确认当前 Series 的舒张末期 ED 和收缩末期 ES。"
             )
             return False
+        sourceMaskFolder = self.segmentationSequenceNode.GetAttribute(
+            "CineCMRQC.SourceMaskFolder"
+        ) or ""
+        sourceMaskExists = self.segmentationSequenceNode.GetAttribute(
+            "CineCMRQC.SourceMaskExists"
+        ) != "0"
         outputFolder = self.exportPathEdit.currentPath
+        if not outputFolder and not sourceMaskExists and sourceMaskFolder:
+            outputFolder = sourceMaskFolder
         if not outputFolder:
             slicer.util.errorDisplay("请先选择输出目录。")
             return False
@@ -1821,10 +2107,44 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         ]
         try:
             with slicer.util.tryWithErrorDisplay("导出 Mask 失败。", waitCursor=True):
-                sourceMaskFolder = self.segmentationSequenceNode.GetAttribute(
-                    "CineCMRQC.SourceMaskFolder"
-                ) or ""
-                if (
+                if not sourceMaskExists and sourceMaskFolder:
+                    manifestPath = self.logic.createSegmentationSequenceSourceFiles(
+                        self.segmentationSequenceNode,
+                        self.imageSequenceNode,
+                        self.sequenceBrowserNode,
+                        sourceMaskFolder,
+                    )
+                    self.logic.setAnnotationDecisionState(
+                        self.segmentationSequenceNode,
+                        "required",
+                        saved=True,
+                    )
+                    self._markActiveEntryMaskSaved()
+                    self.segmentationSequenceNode.SetAttribute(
+                        "CineCMRQC.DirtyFrameCandidates",
+                        "",
+                    )
+                    self.segmentationSequenceNode.SetAttribute(
+                        "CineCMRQC.MaskMayBeDirty",
+                        "0",
+                    )
+                    self.logic.initializeReviewMetadataBaseline(
+                        self.segmentationSequenceNode
+                    )
+                    auditPath = self._recordCurrentSeriesAudit(
+                        event="save",
+                        modifiedFrameIndices=modifiedFrameIndices,
+                    )
+                    self._log("新 Mask 已创建：{0}".format(manifestPath))
+                    if showSuccess:
+                        slicer.util.infoDisplay(
+                            "{0} 保存完成，已创建新的 Mask。\n\nSeries 记录：\n{1}\n\n患者 JSON：\n{2}".format(
+                                self._currentSeriesId(),
+                                manifestPath,
+                                auditPath or "写入失败，请查看错误提示",
+                            )
+                        )
+                elif (
                     sourceMaskFolder
                     and os.path.abspath(outputFolder) == os.path.abspath(sourceMaskFolder)
                 ):
@@ -1848,6 +2168,12 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                     self.logic.initializeReviewMetadataBaseline(
                         self.segmentationSequenceNode
                     )
+                    self.logic.setAnnotationDecisionState(
+                        self.segmentationSequenceNode,
+                        "required",
+                        saved=True,
+                    )
+                    self._markActiveEntryMaskSaved()
                     auditPath = self._recordCurrentSeriesAudit(
                         event="save",
                         modifiedFrameIndices=modifiedFrameIndices,
@@ -1892,6 +2218,15 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay(str(exc))
             return False
 
+    def _markActiveEntryMaskSaved(self):
+        if not 0 <= self.activePatientSeriesIndex < len(self.patientSeriesEntries):
+            return
+        entry = self.patientSeriesEntries[self.activePatientSeriesIndex]
+        entry["mask_frame_count"] = entry["image_frame_count"]
+        entry["mask_orientation"] = "aligned"
+        entry["status"] = "ready"
+        entry["annotation_decision"] = "required"
+
     def onExportAllPatientSeries(self):
         if not self.patientSeriesEntries:
             slicer.util.errorDisplay("请先扫描患者目录。")
@@ -1912,7 +2247,11 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             ):
                 manifestPaths = []
                 for entryIndex, entry in enumerate(self.patientSeriesEntries):
-                    if entry["status"] != "ready":
+                    if (
+                        entry["status"] != "ready"
+                        or int(entry.get("mask_frame_count") or 0) == 0
+                        or entry.get("annotation_decision") == "not_required"
+                    ):
                         continue
                     self.patientSeriesComboBox.setCurrentIndex(entryIndex)
                     self.onLoadSelectedPatientSeries()
@@ -2369,9 +2708,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 status = imageError
             elif any(value < 0 or value >= imageFrameCount for value in referenceFrames):
                 status = "reference-frame-out-of-range"
-            elif maskFrameCount == 0:
-                status = "selected-mask-not-generated"
-            elif maskFrameCount != imageFrameCount:
+            elif maskFrameCount not in [0, imageFrameCount]:
                 status = "image-mask-frame-mismatch"
             else:
                 status = "ready"
@@ -2385,6 +2722,11 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 "image_size": imageSize,
                 "image_frame_count": imageFrameCount,
                 "doctor_selected": doctorSelected,
+                # Loading eligibility is determined only by the physician's
+                # reference-frame selection. Mask presence is deliberately not
+                # part of this decision: selected image-only series remain
+                # available for a physician annotation decision.
+                "load_eligible": doctorSelected,
                 "reference_frames": referenceFrames,
                 "mask_path": maskPath,
                 "mask_frame_count": maskFrameCount,
@@ -2398,7 +2740,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
 
         if not entries:
             raise ValueError("No canonical img/seriesXXXX-Body.nii.gz files were found.")
-        selectedEntries = [entry for entry in entries if entry["doctor_selected"]]
+        selectedEntries = [entry for entry in entries if entry["load_eligible"]]
         return {
             "patient_path": patientPath,
             "series": entries,
@@ -3469,6 +3811,178 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         segmentationSequenceNode.Modified()
         return self.getCardiacPhaseState(segmentationSequenceNode)
 
+    def initializeCardiacPhaseStateWithoutMask(
+        self,
+        segmentationSequenceNode,
+        auditRecord=None,
+    ):
+        if not segmentationSequenceNode:
+            return self.getCardiacPhaseState(segmentationSequenceNode)
+        frameCount = segmentationSequenceNode.GetNumberOfDataNodes()
+        auditRecord = auditRecord or {}
+        edRecord = auditRecord.get("end_diastolic") or {}
+        esRecord = auditRecord.get("end_systolic") or {}
+        try:
+            edFrame = int(edRecord.get("frame_index"))
+            esFrame = int(esRecord.get("frame_index"))
+        except (TypeError, ValueError):
+            edFrame = -1
+            esFrame = -1
+        restored = (
+            0 <= edFrame < frameCount
+            and 0 <= esFrame < frameCount
+            and edFrame != esFrame
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.EndDiastolicFrame",
+            str(edFrame if restored else -1),
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.EndSystolicFrame",
+            str(esFrame if restored else -1),
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.EndDiastolicSource",
+            (edRecord.get("source") or "restored") if restored else "manual-required",
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.EndSystolicSource",
+            (esRecord.get("source") or "restored") if restored else "manual-required",
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.CardiacPhaseConfirmed",
+            "1" if restored and auditRecord.get("cardiac_phase_confirmed") else "0",
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.CardiacPhaseConfirmedAt",
+            auditRecord.get("cardiac_phase_confirmed_at") if restored else None,
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.CardiacPhaseMetric",
+            "manual-image-review",
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.CardiacPhaseConfidence",
+            "manual" if restored else "not-estimated-no-mask",
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.RequireCardiacPhaseConfirmation",
+            "1",
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.HasBeenSaved",
+            "1" if restored else "0",
+        )
+        segmentationSequenceNode.SetAttribute("CineCMRQC.DirtyFrameCandidates", "")
+        segmentationSequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", "0")
+        self.initializeReviewMetadataBaseline(segmentationSequenceNode)
+        self.initializeCardiacPhaseBaseline(segmentationSequenceNode)
+        segmentationSequenceNode.Modified()
+        return self.getCardiacPhaseState(segmentationSequenceNode)
+
+    def setAnnotationDecisionState(
+        self,
+        segmentationSequenceNode,
+        decision,
+        saved=False,
+    ):
+        if not segmentationSequenceNode:
+            return
+        if decision not in ["undecided", "required", "not_required"]:
+            raise ValueError("Unsupported annotation decision: {0}".format(decision))
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.AnnotationDecision",
+            decision,
+        )
+        segmentationSequenceNode.SetAttribute(
+            "CineCMRQC.AnnotationDecisionSaved",
+            "1" if saved else "0",
+        )
+        if decision == "not_required":
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.RequireCardiacPhaseConfirmation",
+                "0",
+            )
+            segmentationSequenceNode.SetAttribute("CineCMRQC.EndDiastolicFrame", "-1")
+            segmentationSequenceNode.SetAttribute("CineCMRQC.EndSystolicFrame", "-1")
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.EndDiastolicSource",
+                "not-required",
+            )
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.EndSystolicSource",
+                "not-required",
+            )
+            segmentationSequenceNode.SetAttribute("CineCMRQC.CardiacPhaseConfirmed", "0")
+            segmentationSequenceNode.SetAttribute("CineCMRQC.CardiacPhaseConfirmedAt", None)
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.CardiacPhaseMetric",
+                "not-applicable",
+            )
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.CardiacPhaseConfidence",
+                "not-applicable",
+            )
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.HasBeenSaved",
+                "1" if saved else "0",
+            )
+            self.initializeCardiacPhaseBaseline(segmentationSequenceNode)
+        elif decision == "required":
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.RequireCardiacPhaseConfirmation",
+                "1",
+            )
+        segmentationSequenceNode.Modified()
+
+    def restoreAnnotationDecisionState(
+        self,
+        segmentationSequenceNode,
+        auditRecord,
+        hasSourceMask=False,
+    ):
+        auditRecord = auditRecord or {}
+        recordedDecision = auditRecord.get("annotation_decision")
+        if recordedDecision == "not_required":
+            decision = "not_required"
+            saved = True
+        elif recordedDecision == "required" and hasSourceMask:
+            decision = "required"
+            saved = True
+        else:
+            decision = "required" if hasSourceMask else "undecided"
+            saved = bool(hasSourceMask)
+        self.setAnnotationDecisionState(
+            segmentationSequenceNode,
+            decision,
+            saved,
+        )
+
+    def clearSegmentationSequence(
+        self,
+        segmentationSequenceNode,
+        imageSequenceNode,
+        browserNode,
+        labels,
+    ):
+        if not segmentationSequenceNode or not imageSequenceNode:
+            raise ValueError("MRI and segmentation sequences are required.")
+        for frameIndex in range(segmentationSequenceNode.GetNumberOfDataNodes()):
+            segmentationNode = segmentationSequenceNode.GetNthDataNode(frameIndex)
+            segmentationNode.GetSegmentation().RemoveAllSegments()
+            self._ensureSegments(segmentationNode, labels)
+            segmentationNode.Modified()
+        segmentationSequenceNode.SetAttribute("CineCMRQC.DirtyFrameCandidates", "")
+        segmentationSequenceNode.SetAttribute("CineCMRQC.MaskMayBeDirty", "0")
+        if browserNode:
+            slicer.modules.sequences.logic().UpdateProxyNodesFromSequences(browserNode)
+        self.initializeBaselineDigests(
+            segmentationSequenceNode,
+            imageSequenceNode,
+            "empty-after-not-required-decision",
+        )
+        segmentationSequenceNode.Modified()
+
     def getCardiacPhaseState(self, segmentationSequenceNode):
         if not segmentationSequenceNode:
             return {
@@ -3746,6 +4260,122 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         audit["ejection_fraction_updated_at"] = self._utcNow()
         return self.writePatientAudit(patientRoot, audit)
 
+    def patientSeriesAuditRecord(self, patientRoot, seriesId):
+        if not patientRoot or not seriesId:
+            return {}
+        audit = self.loadPatientAudit(patientRoot)
+        record = audit.get("series", {}).get(seriesId, {})
+        return dict(record) if isinstance(record, dict) else {}
+
+    def _appendAnnotationDecisionHistory(
+        self,
+        record,
+        decision,
+        reviewer,
+        maskPresent,
+        decidedAt,
+    ):
+        previousDecision = record.get("annotation_decision")
+        if previousDecision == decision:
+            return
+        record.setdefault("annotation_decision_history", []).append({
+            "decision": decision,
+            "decided_at": decidedAt,
+            "reviewer": reviewer or "",
+            "mask_present_before_decision": bool(maskPresent),
+        })
+
+    def deleteSeriesMasksAndRecordDecision(
+        self,
+        patientRoot,
+        seriesId,
+        reviewer="",
+    ):
+        patientRoot = os.path.abspath(patientRoot)
+        if not re.match(r"^series\d+-Body$", seriesId or "", re.IGNORECASE):
+            raise ValueError("Series ID 不符合安全删除规则：{0}".format(seriesId))
+        segmentationRoot = os.path.abspath(
+            os.path.join(patientRoot, "segmentation")
+        )
+        targetPath = os.path.abspath(os.path.join(segmentationRoot, seriesId))
+        if os.path.dirname(targetPath) != segmentationRoot:
+            raise ValueError("Mask 删除路径越出当前患者 segmentation 目录。")
+        if os.path.islink(targetPath):
+            raise ValueError("拒绝删除符号链接形式的 Mask 目录：{0}".format(targetPath))
+
+        originalAudit = self.loadPatientAudit(patientRoot)
+        audit = json.loads(json.dumps(originalAudit, ensure_ascii=False))
+        now = self._utcNow()
+        record = audit.setdefault("series", {}).setdefault(seriesId, {})
+        maskPresent = os.path.isdir(targetPath)
+        self._appendAnnotationDecisionHistory(
+            record,
+            "not_required",
+            reviewer,
+            maskPresent,
+            now,
+        )
+        record["annotation_decision"] = "not_required"
+        record["annotation_decision_confirmed"] = True
+        record["annotation_decision_at"] = now
+        record["annotation_decision_reviewer"] = reviewer or ""
+        record["mask_present_at_decision"] = bool(maskPresent)
+        record["mask_deleted"] = bool(maskPresent)
+        record["mask_frame_count"] = 0
+        record["review_status"] = "completed-no-annotation"
+        record["data_status"] = "ready-image-only"
+        record["end_diastolic"] = {
+            "frame_index": None,
+            "frame_number": None,
+            "source": "not-required",
+            "pixel_count": None,
+            "area_pixels": None,
+            "area_mm2": None,
+        }
+        record["end_systolic"] = dict(record["end_diastolic"])
+        record["cardiac_phase_confirmed"] = False
+        record["cardiac_phase_confirmed_at"] = None
+        record["cardiac_phase_metric"] = "not-applicable"
+        record["cardiac_phase_confidence"] = "not-applicable"
+        record["last_saved_at"] = now
+        record["save_count"] = int(record.get("save_count", 0)) + 1
+        record.setdefault("save_history", []).append({
+            "saved_at": now,
+            "save_type": "annotation-not-required",
+            "mask_deleted": bool(maskPresent),
+            "reviewer": reviewer or "",
+        })
+
+        stagedPath = ""
+        auditWritten = False
+        try:
+            if maskPresent:
+                suffix = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+                stagedPath = os.path.join(
+                    segmentationRoot,
+                    ".cinecmrqc-delete-{0}-{1}".format(seriesId, suffix),
+                )
+                if os.path.exists(stagedPath):
+                    raise ValueError("临时删除路径已存在：{0}".format(stagedPath))
+                os.replace(targetPath, stagedPath)
+            auditPath = self.writePatientAudit(patientRoot, audit)
+            auditWritten = True
+            if stagedPath:
+                shutil.rmtree(stagedPath)
+            return {
+                "audit_path": auditPath,
+                "deleted_paths": [targetPath] if maskPresent else [],
+            }
+        except Exception:
+            if stagedPath and os.path.isdir(stagedPath) and not os.path.exists(targetPath):
+                os.replace(stagedPath, targetPath)
+            if auditWritten:
+                try:
+                    self.writePatientAudit(patientRoot, originalAudit)
+                except Exception:
+                    logging.exception("Failed to restore patient audit after Mask deletion failure.")
+            raise
+
     def initializePatientAuditSeriesCatalog(self, patientRoot, seriesEntries):
         audit = self.loadPatientAudit(patientRoot)
         records = audit.setdefault("series", {})
@@ -3790,6 +4420,14 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             record.setdefault("cardiac_phase_confirmed", False)
             record.setdefault("cardiac_phase_confirmed_at", None)
             record.setdefault("cardiac_phase_confidence", "")
+            record.setdefault(
+                "annotation_decision",
+                "required" if int(entry.get("mask_frame_count") or 0) else "undecided",
+            )
+            record.setdefault("annotation_decision_confirmed", False)
+            record.setdefault("annotation_decision_at", None)
+            record.setdefault("annotation_decision_reviewer", "")
+            record.setdefault("annotation_decision_history", [])
         audit["series_catalog_count"] = len(records)
         return self.writePatientAudit(patientRoot, audit)
 
@@ -3868,6 +4506,25 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 latestModifiedIndexSet.add(frameIndex)
         latestModifiedIndices = sorted(latestModifiedIndexSet)
         if event == "save":
+            reviewer = segmentationSequenceNode.GetAttribute(
+                "CineCMRQC.DefaultReviewer"
+            ) or ""
+            self._appendAnnotationDecisionHistory(
+                record,
+                "required",
+                reviewer,
+                True,
+                now,
+            )
+            record["annotation_decision"] = "required"
+            record["annotation_decision_confirmed"] = True
+            record["annotation_decision_at"] = now
+            record["annotation_decision_reviewer"] = reviewer
+            record["mask_present_at_decision"] = True
+            record["mask_deleted"] = False
+            record["mask_frame_count"] = frameCount
+            record["review_status"] = "completed-with-annotation"
+            record["data_status"] = "ready"
             existingModifiedIndices.update(latestModifiedIndices)
             record["latest_save_modified_frame_indices"] = latestModifiedIndices
             record["latest_save_modified_frame_numbers"] = [
@@ -3882,6 +4539,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             history = record.setdefault("save_history", [])
             history.append({
                 "saved_at": now,
+                "save_type": "annotation-required",
                 "modified_frame_indices": latestModifiedIndices,
                 "modified_frame_numbers": [value + 1 for value in latestModifiedIndices],
                 "modified_frame_count": len(latestModifiedIndices),
@@ -4138,6 +4796,130 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             for row in manifestRows:
                 writer.writerow(row)
         return manifestPath
+
+    def createSegmentationSequenceSourceFiles(
+        self,
+        segmentationSequenceNode,
+        imageSequenceNode,
+        browserNode,
+        outputFolder,
+    ):
+        self.validateBinding(imageSequenceNode, segmentationSequenceNode, browserNode)
+        outputFolder = os.path.abspath(outputFolder)
+        seriesFolder = os.path.dirname(outputFolder)
+        segmentationRoot = os.path.dirname(seriesFolder)
+        seriesId = imageSequenceNode.GetAttribute("CineCMRQC.SeriesID") or "cine_mask"
+        if os.path.basename(seriesFolder) != seriesId:
+            raise ValueError("新建 Mask 的输出目录与当前 Series ID 不一致。")
+        if os.path.basename(outputFolder) != "sequence":
+            raise ValueError("新建 Mask 必须写入当前 Series 的 sequence 目录。")
+        os.makedirs(segmentationRoot, exist_ok=True)
+        os.makedirs(seriesFolder, exist_ok=True)
+        if os.path.isdir(outputFolder) and self._collectFrameFiles(outputFolder):
+            raise ValueError("Mask sequence 目录已包含医学影像文件，不能作为新 Mask 写入。")
+
+        temporaryFolder = tempfile.mkdtemp(
+            prefix=".cinecmrqc-new-mask-",
+            dir=seriesFolder,
+        )
+        frameCount = segmentationSequenceNode.GetNumberOfDataNodes()
+        createdPaths = []
+        try:
+            temporaryManifestPath = self.exportSegmentationSequenceAsLabelmaps(
+                segmentationSequenceNode,
+                imageSequenceNode,
+                browserNode,
+                temporaryFolder,
+                "__cinecmrqc_new",
+            )
+            generatedFramePaths = [
+                os.path.join(
+                    temporaryFolder,
+                    "__cinecmrqc_new_frame{0:03d}.nii.gz".format(frameIndex),
+                )
+                for frameIndex in range(frameCount)
+            ]
+            generatedSummaryPath = os.path.join(
+                temporaryFolder,
+                "__cinecmrqc_new_4d.nii.gz",
+            )
+            if any(not os.path.isfile(path) for path in generatedFramePaths):
+                raise ValueError("新 Mask 的逐帧导出不完整。")
+            if not os.path.isfile(generatedSummaryPath):
+                raise ValueError("新 Mask 的 4D 汇总导出失败。")
+
+            os.makedirs(outputFolder, exist_ok=True)
+            sourcePaths = [
+                os.path.join(
+                    outputFolder,
+                    "frame_{0:05d}_seg.nii.gz".format(frameIndex),
+                )
+                for frameIndex in range(frameCount)
+            ]
+            summaryPath = os.path.join(seriesFolder, seriesId + "_seg.nii.gz")
+            labelsPath = os.path.join(outputFolder, "labels.csv")
+            manifestPath = os.path.join(outputFolder, "manifest.csv")
+            targets = sourcePaths + [summaryPath, labelsPath, manifestPath]
+            if any(os.path.exists(path) for path in targets):
+                raise ValueError("新 Mask 的目标文件已存在，已取消写入。")
+
+            for generatedPath, sourcePath in zip(generatedFramePaths, sourcePaths):
+                os.replace(generatedPath, sourcePath)
+                createdPaths.append(sourcePath)
+            os.replace(generatedSummaryPath, summaryPath)
+            createdPaths.append(summaryPath)
+            os.replace(os.path.join(temporaryFolder, "labels.csv"), labelsPath)
+            createdPaths.append(labelsPath)
+
+            with open(temporaryManifestPath, "r", encoding="utf-8-sig", newline="") as fp:
+                reader = csv.DictReader(fp)
+                rows = list(reader)
+                fieldnames = list(reader.fieldnames or [])
+            if len(rows) != frameCount:
+                raise ValueError("新 Mask 的 manifest 帧数不正确。")
+            if "backup_mask_path" not in fieldnames:
+                fieldnames.append("backup_mask_path")
+            for frameIndex, row in enumerate(rows):
+                row["source_mask_path"] = sourcePaths[frameIndex]
+                row["mask_path"] = sourcePaths[frameIndex]
+                row["backup_mask_path"] = ""
+            replacementManifestPath = os.path.join(
+                temporaryFolder,
+                "manifest_rewritten.csv",
+            )
+            with open(replacementManifestPath, "w", encoding="utf-8-sig", newline="") as fp:
+                writer = csv.DictWriter(fp, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            os.replace(replacementManifestPath, manifestPath)
+            createdPaths.append(manifestPath)
+
+            for frameIndex, sourcePath in enumerate(sourcePaths):
+                segmentationSequenceNode.GetNthDataNode(frameIndex).SetAttribute(
+                    "CineCMRQC.SourcePath",
+                    sourcePath,
+                )
+            segmentationSequenceNode.SetAttribute(
+                "CineCMRQC.SourceMaskFolder",
+                outputFolder,
+            )
+            segmentationSequenceNode.SetAttribute("CineCMRQC.SourceMaskExists", "1")
+            segmentationSequenceNode.SetAttribute("CineCMRQC.SourceMaskOrientation", "aligned")
+            segmentationSequenceNode.SetAttribute("CineCMRQC.AppliedMaskTransform", "none")
+            self.initializeBaselineDigests(
+                segmentationSequenceNode,
+                imageSequenceNode,
+                "saved-new-source-files",
+            )
+            self.markCardiacPhaseStateSaved(segmentationSequenceNode)
+            return manifestPath
+        except Exception:
+            for path in reversed(createdPaths):
+                if os.path.isfile(path):
+                    os.remove(path)
+            raise
+        finally:
+            shutil.rmtree(temporaryFolder, ignore_errors=True)
 
     def overwriteSegmentationSequenceSourceFiles(
         self,
@@ -4576,6 +5358,7 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
         self.setUp()
         self.test_parseLabelMap()
         self.test_naturalSort()
+        self.test_imageOnlySeriesAndAnnotationDecisionAudit()
         self.test_frameSpecificEditingAndReviewState()
         self.test_geometryValidation()
         self.test_syntheticCineDemo()
@@ -4602,6 +5385,87 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
             {180: "Label_180", 255: "Label_255"},
         )
         self.assertEqual(logic.formatLabelMap({255: "Boundary", 180: "Cavity"}), "180:Cavity,255:Boundary")
+
+    def test_imageOnlySeriesAndAnnotationDecisionAudit(self):
+        import numpy as np
+        import SimpleITK as sitk
+
+        logic = CineCMRQCLogic()
+        with tempfile.TemporaryDirectory() as patientRoot:
+            seriesId = "series0001-Body"
+            imageFolder = os.path.join(patientRoot, "img")
+            framesFolder = os.path.join(patientRoot, "frames", seriesId)
+            os.makedirs(imageFolder)
+            os.makedirs(framesFolder)
+            image = sitk.GetImageFromArray(
+                np.zeros((3, 1, 8, 8), dtype=np.float32),
+                isVector=False,
+            )
+            sitk.WriteImage(
+                image,
+                os.path.join(imageFolder, seriesId + ".nii.gz"),
+            )
+            sitk.WriteImage(
+                image,
+                os.path.join(imageFolder, "series0002-Body.nii.gz"),
+            )
+            sitk.WriteImage(
+                image,
+                os.path.join(imageFolder, "series0003-unknown.nii.gz"),
+            )
+            open(os.path.join(framesFolder, "frame_000.png"), "wb").close()
+
+            scanResult = logic.scanPatientFolder(patientRoot)
+            self.assertEqual(scanResult["total_count"], 2)
+            self.assertEqual(scanResult["selected_count"], 1)
+            entriesById = {
+                entry["series_id"]: entry for entry in scanResult["series"]
+            }
+            entry = entriesById[seriesId]
+            self.assertTrue(entry["doctor_selected"])
+            self.assertTrue(entry["load_eligible"])
+            self.assertEqual(entry["mask_frame_count"], 0)
+            self.assertEqual(entry["status"], "ready")
+            excludedEntry = entriesById["series0002-Body"]
+            self.assertFalse(excludedEntry["doctor_selected"])
+            self.assertFalse(excludedEntry["load_eligible"])
+            self.assertEqual(excludedEntry["status"], "excluded-by-doctor")
+
+            logic.initializePatientAuditSeriesCatalog(
+                patientRoot,
+                scanResult["series"],
+            )
+            maskFolder = os.path.join(
+                patientRoot,
+                "segmentation",
+                seriesId,
+                "sequence",
+            )
+            os.makedirs(maskFolder)
+            open(os.path.join(maskFolder, "frame_00000_seg.nii.gz"), "wb").close()
+            result = logic.deleteSeriesMasksAndRecordDecision(
+                patientRoot,
+                seriesId,
+                "测试医生",
+            )
+            self.assertFalse(os.path.exists(os.path.dirname(maskFolder)))
+            self.assertEqual(
+                result["deleted_paths"],
+                [os.path.dirname(maskFolder)],
+            )
+            record = logic.patientSeriesAuditRecord(patientRoot, seriesId)
+            self.assertEqual(record["annotation_decision"], "not_required")
+            self.assertTrue(record["annotation_decision_confirmed"])
+            self.assertTrue(record["mask_deleted"])
+            self.assertEqual(record["mask_frame_count"], 0)
+            self.assertEqual(
+                record["annotation_decision_history"][-1]["decision"],
+                "not_required",
+            )
+            self.assertEqual(
+                record["annotation_decision_history"][-1]["reviewer"],
+                "测试医生",
+            )
 
     def test_frameSpecificEditingAndReviewState(self):
         import numpy as np
@@ -4967,4 +5831,33 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
             self.assertEqual(record["latest_save_modified_frame_indices"], [3, 4])
             self.assertEqual(record["save_count"], 2)
             self.assertEqual(len(record["save_history"]), 2)
+            self.assertEqual(record["annotation_decision"], "required")
+            self.assertEqual(
+                record["save_history"][-1]["save_type"],
+                "annotation-required",
+            )
             self.assertEqual(record["last_modified_source"], "manual-mask-save")
+
+            newSeriesId = "series0002-Body"
+            imageSequenceNode.SetAttribute("CineCMRQC.SeriesID", newSeriesId)
+            sourceMaskFolder = os.path.join(
+                patientRoot,
+                "segmentation",
+                newSeriesId,
+                "sequence",
+            )
+            manifestPath = logic.createSegmentationSequenceSourceFiles(
+                segmentationSequenceNode,
+                imageSequenceNode,
+                browserNode,
+                sourceMaskFolder,
+            )
+            self.assertTrue(os.path.isfile(manifestPath))
+            self.assertEqual(
+                len(logic._collectFrameFiles(sourceMaskFolder)),
+                6,
+            )
+            self.assertTrue(os.path.isfile(os.path.join(
+                os.path.dirname(sourceMaskFolder),
+                newSeriesId + "_seg.nii.gz",
+            )))
