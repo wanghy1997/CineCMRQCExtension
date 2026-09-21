@@ -150,17 +150,16 @@ masks/
 1. 保持默认勾选 `简洁模式`。
 2. 在 `患者目录` 选择患者根目录，不要选择其中某个 `seriesXXXX-Body`。
 3. 点击 `扫描并自动加载`。插件会扫描任务并立即打开首个可用 Series。
-4. 插件以 `frames/<series>` 是否存在医生选中的 PNG 作为是否进入推理/QC 的权威依据。
-5. `frames/<series>` 为空的 series 会被排除，不视为 mask 缺失，也不要求 MedSAM2 推理。
-6. 对于医生选中的 series，插件按完全相同的 series ID 自动配对：
+4. 插件按 `img/` 中合法的 `seriesXXXX-Body.nii.gz` 自动发现 Series，不要求医生参考帧。
+5. 对于发现的 Series，插件按完全相同的 Series ID 自动配对：
 
    `img/<series>.nii.gz` ↔ `segmentation/<series>/sequence/`
 
-7. 在 `动态 Series` 下拉框选择另一个 series 后，插件才加载其 MRI、25 帧 Mask、时间轴和编辑器；安全切换后会从场景释放上一 Series，并强制隐藏全部遗留分割显示节点，始终只让当前 Series 的 Mask 可见。若当前 Series 的 ED/ES 尚未确认，则禁止切换；若存在已确认但未保存的 ED/ES、审核信息或 Mask 修改，则只能选择“立即保存并继续切换”或取消切换。已经保存过的 Series 重新打开后，若没有新修改，可以直接切换。
-8. 插件自动跳到 `frames/<series>` 文件名表示的医生参考帧。当前患者的参考帧均为第 0 帧。
-9. 使用 `上一个`、`下一个` 也会自动加载相邻 Series。
-10. 高级模式默认按 DICOM `TriggerTime` 将当前 Series 的心动时相传递给医生主动选择的新 Series；存在轻微时间差时使用最近心动时相。
-11. `审核进度` 汇总医生关注 Series。保存后的 ED/ES 与逐帧审核信息会从 Mask 目录的 `manifest.csv` 恢复。
+6. 在 `动态 Series` 下拉框选择另一个 Series 后，插件才加载其 MRI、Mask（如有）、时间轴和编辑器；安全切换后会从场景释放上一 Series，并强制隐藏全部遗留分割显示节点，始终只让当前 Series 的 Mask 可见。若当前 Series 的 ED/ES 尚未确认，则禁止切换；若存在已确认但未保存的 ED/ES、审核信息或 Mask 修改，则只能选择“立即保存并继续切换”或取消切换。已经保存过的 Series 重新打开后，若没有新修改，可以直接切换。
+7. 若存在参考帧，插件将其作为初始导航提示；没有参考帧时从第 0 帧开始。
+8. 使用 `上一个`、`下一个` 也会自动加载相邻 Series。
+9. 高级模式默认按 DICOM `TriggerTime` 将当前 Series 的心动时相传递给新 Series；存在轻微时间差时使用最近心动时相。
+10. `审核进度` 汇总已发现的 Series。保存后的 ED/ES 与逐帧审核信息会从 Mask 目录的 `manifest.csv` 恢复。
 
 只有数据不符合上述目录约定时，才取消勾选 `简洁模式`，展开 `高级：手动导入 MRI Sequence` 和 `高级：手动导入或新建 Mask Sequence` 分别指定路径。
 
@@ -169,7 +168,7 @@ masks/
 | 路径 | 含义 | 插件用途 |
 | --- | --- | --- |
 | `seriesXXXX-Body/` | 医生提供的原始 25 帧 DICOM；其中 `.nii` 是当时给出的标注来源 | 读取 DICOM `TriggerTime`，不直接改写 |
-| `frames/<series>/` | 医生关注的首帧或某一参考帧；空目录表示该 series 不进入推理/QC | 患者级筛选和跳转参考帧 |
+| `frames/<series>/` | 可选的医生参考帧 | 初始导航提示和审计元数据 |
 | `img/<series>.nii.gz` | 一个 series 合成的 4D 模型输入 | 建立 MRI Volume Sequence |
 | `segmentation/<series>/*.png` | 每个时间帧的分割结果 | 数据来源和可视化，不直接作为 Slicer labelmap 读取 |
 | `segmentation/<series>/sequence/*.nii.gz` | PNG 转成的逐帧 3D NIfTI | 建立可编辑 Segmentation Sequence |

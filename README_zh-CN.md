@@ -2,15 +2,16 @@
 
 [English](README.md) | [简体中文](README_zh-CN.md)
 
-## v0.2.5 新增功能
+## v0.3.0 新增功能
 
-- 同一患者批次中，医生选中的 MRI Series 无论是否已有 Mask 都可以加载；
-- 是否进入可加载列表只依据医生参考帧；没有医生参考帧的混合或非目标 Series 不加载；
+- 同一患者批次中，所有合法的标准 MRI Series 无论是否已有 Mask 都可以加载；
+- `frames/` 和医生参考帧不再是加载前置条件；
 - 对没有源 Mask 的 Series 只在内存中准备空分割，医生保存标注前不会提前创建 Mask 文件；
 - 医生可将当前 Series 判定为“无需标注”，插件会直接删除其已有 Mask，并把决定及变更历史写入患者总 JSON；
 - 后续医生仍可重新标注该 Series，插件会重建标准 Mask 文件，同时保留决定变更历史；
 - 没有 Mask 的 Series 只有在准备保存标注时才需要人工指定并确认 ED/ES；
 - 患者批量 Mask 导出会跳过尚无 Mask 或已判定为无需标注的 Series。
+- 支持从 `segmentation/<series>/sequence/` 直接读取无参考帧推理生成的逐帧 Mask。
 
 ## 设计目的
 

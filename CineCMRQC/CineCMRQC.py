@@ -20,7 +20,7 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleWidget,
 )
 
-CINE_CMR_QC_VERSION = "0.2.5"
+CINE_CMR_QC_VERSION = "0.3.0"
 CINE_CMR_QC_GITHUB_URL = "https://github.com/wanghy1997/CineCMRQCExtension"
 
 
@@ -144,7 +144,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.patientPathEdit = ctk.ctkPathLineEdit()
         self.patientPathEdit.filters = ctk.ctkPathLineEdit.Dirs
         self.patientPathEdit.toolTip = (
-            "选择包含 img/、frames/ 和 segmentation/ 的患者根目录。"
+            "选择包含 img/ 的患者根目录；frames/ 和 segmentation/ 为可选目录。"
         )
         form.addRow("患者目录：", self.patientPathEdit)
 
@@ -1070,8 +1070,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 ]
                 self._refreshPatientSeriesList(False)
                 self.patientSummaryLabel.text = (
-                    "全部：{0} | 医生关注：{1} | 可加载：{2} | "
-                    "医生排除：{3} | 需处理：{4} | 历史左右纠正：{5}"
+                    "全部：{0} | 已发现：{1} | 可加载：{2} | "
+                    "不可加载：{3} | 需处理：{4} | 历史左右纠正：{5}"
                 ).format(
                     scanResult["total_count"],
                     scanResult["selected_count"],
@@ -2603,12 +2603,9 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
 
         patientPath = os.path.abspath(patientPath)
         imageFolder = os.path.join(patientPath, "img")
-        framesFolder = os.path.join(patientPath, "frames")
         segmentationFolder = os.path.join(patientPath, "segmentation")
         if not os.path.isdir(imageFolder):
             raise ValueError("Patient folder has no img directory: {0}".format(patientPath))
-        if not os.path.isdir(framesFolder):
-            raise ValueError("Patient folder has no frames directory: {0}".format(patientPath))
 
         imageFilePattern = re.compile(r"^(series\d+-Body)\.nii(?:\.gz)?$", re.IGNORECASE)
         entries = []
@@ -2639,6 +2636,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             except Exception as exc:
                 imageError = "unreadable-image: {0}".format(exc)
 
+            framesFolder = os.path.join(patientPath, "frames")
             doctorFramesPath = os.path.join(framesFolder, seriesId)
             doctorFrameFiles = []
             if os.path.isdir(doctorFramesPath):
@@ -2655,7 +2653,11 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 frameMatch = re.search(r"(\d+)", os.path.splitext(frameFile)[0])
                 if frameMatch:
                     referenceFrames.append(int(frameMatch.group(1)))
-            doctorSelected = bool(doctorFrameFiles)
+            # Inference-only datasets do not provide physician reference
+            # frames. Every valid canonical MRI series is therefore eligible;
+            # frames, when present, are retained only as optional navigation
+            # hints and audit metadata.
+            doctorSelected = True
 
             segmentationSeriesPath = os.path.join(segmentationFolder, seriesId)
             maskPath = os.path.join(segmentationSeriesPath, "sequence")
@@ -2702,9 +2704,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                         timeIndexUnit = "ms"
                 except Exception:
                     logging.warning("Could not read DICOM TriggerTime for %s", seriesId, exc_info=True)
-            if not doctorSelected:
-                status = "excluded-by-doctor"
-            elif imageError:
+            if imageError:
                 status = imageError
             elif any(value < 0 or value >= imageFrameCount for value in referenceFrames):
                 status = "reference-frame-out-of-range"
@@ -2726,7 +2726,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 # reference-frame selection. Mask presence is deliberately not
                 # part of this decision: selected image-only series remain
                 # available for a physician annotation decision.
-                "load_eligible": doctorSelected,
+                "load_eligible": status == "ready",
                 "reference_frames": referenceFrames,
                 "mask_path": maskPath,
                 "mask_frame_count": maskFrameCount,
@@ -5394,9 +5394,7 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
         with tempfile.TemporaryDirectory() as patientRoot:
             seriesId = "series0001-Body"
             imageFolder = os.path.join(patientRoot, "img")
-            framesFolder = os.path.join(patientRoot, "frames", seriesId)
             os.makedirs(imageFolder)
-            os.makedirs(framesFolder)
             image = sitk.GetImageFromArray(
                 np.zeros((3, 1, 8, 8), dtype=np.float32),
                 isVector=False,
@@ -5413,11 +5411,9 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
                 image,
                 os.path.join(imageFolder, "series0003-unknown.nii.gz"),
             )
-            open(os.path.join(framesFolder, "frame_000.png"), "wb").close()
-
             scanResult = logic.scanPatientFolder(patientRoot)
             self.assertEqual(scanResult["total_count"], 2)
-            self.assertEqual(scanResult["selected_count"], 1)
+            self.assertEqual(scanResult["selected_count"], 2)
             entriesById = {
                 entry["series_id"]: entry for entry in scanResult["series"]
             }
@@ -5427,9 +5423,9 @@ class CineCMRQCTest(ScriptedLoadableModuleTest):
             self.assertEqual(entry["mask_frame_count"], 0)
             self.assertEqual(entry["status"], "ready")
             excludedEntry = entriesById["series0002-Body"]
-            self.assertFalse(excludedEntry["doctor_selected"])
-            self.assertFalse(excludedEntry["load_eligible"])
-            self.assertEqual(excludedEntry["status"], "excluded-by-doctor")
+            self.assertTrue(excludedEntry["doctor_selected"])
+            self.assertTrue(excludedEntry["load_eligible"])
+            self.assertEqual(excludedEntry["status"], "ready")
 
             logic.initializePatientAuditSeriesCatalog(
                 patientRoot,

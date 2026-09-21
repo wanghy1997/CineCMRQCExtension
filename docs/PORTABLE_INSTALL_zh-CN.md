@@ -9,12 +9,12 @@
 
 ## 2. 解压发布包
 
-将 `CineCMRQCExtension-0.2.5.zip` 解压到固定目录。安装后不要移动或删除该目录。
+将 `CineCMRQCExtension-0.3.0.zip` 解压到固定目录。安装后不要移动或删除该目录。
 
 正确结构：
 
 ```text
-CineCMRQCExtension-0.2.5/
+CineCMRQCExtension-0.3.0/
   CMakeLists.txt
   RELEASE.json
   NOTICE.txt
@@ -35,7 +35,7 @@ CineCMRQCExtension-0.2.5/
    - 启用开发者模式并重启 Slicer。
 3. 在顶部模块菜单选择 `Developer Tools > Extension Wizard`。
 4. 点击 `Select Extension`。
-5. 选择解压后的扩展根目录 `CineCMRQCExtension-0.2.5`，即包含根 `CMakeLists.txt` 的目录。不要只选里面的 `CineCMRQC` 子目录。
+5. 选择解压后的扩展根目录 `CineCMRQCExtension-0.3.0`，即包含根 `CMakeLists.txt` 的目录。不要只选里面的 `CineCMRQC` 子目录。
 6. 出现“添加模块路径”询问时选择确认。
 7. 重启 Slicer。
 8. 在模块菜单 `Cardiac > Cine CMR 逐帧质控` 中打开插件。
@@ -51,7 +51,7 @@ CineCMRQCExtension-0.2.5/
 3. 选择解压目录中的 `CineCMRQC` 子目录：
 
    ```text
-   <解压目录>/CineCMRQCExtension-0.2.5/CineCMRQC
+   <解压目录>/CineCMRQCExtension-0.3.0/CineCMRQC
    ```
 
 4. 确认设置并重启 Slicer。
@@ -84,7 +84,7 @@ CineCMRQCExtension-0.2.5/
         ...
 ```
 
-- `frames/<series>` 非空表示该 Series 需要医生质控；
+- `frames/<series>` 为可选参考帧目录，不再决定该 Series 是否加载；
 - `img/<series>.nii.gz` 是 MRI 4D 序列；
 - `segmentation/<series>/sequence/` 是逐帧 Mask；
 - 默认标签为 `0=背景`、`180=心腔`、`255=心肌`。

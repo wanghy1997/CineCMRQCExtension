@@ -2,15 +2,16 @@
 
 [English](README.md) | [简体中文](README_zh-CN.md)
 
-## What's New in v0.2.5
+## What's New in v0.3.0
 
-- Load every physician-selected MRI series in the patient batch, whether or not a source Mask exists;
-- Determine loading eligibility from physician reference frames only, excluding unselected mixed or non-target series regardless of Mask state;
+- Load every valid canonical MRI series in the patient batch, whether or not a source Mask exists;
+- Treat `frames/` and physician reference frames as optional metadata rather than a loading prerequisite;
 - Prepare an empty in-memory segmentation for image-only series without creating Mask files before the physician saves an annotation;
 - Let the physician mark the current series as annotation-not-required, directly delete its existing Mask, and record the decision and history in the patient JSON;
 - Allow a later physician to annotate the same series again, recreate its canonical Mask files, and retain the decision-change history;
 - Require manual ED/ES selection only when an image-only series is being saved with annotations;
 - Skip image-only and annotation-not-required series during whole-patient Mask export.
+- Import inference-generated Masks from the canonical `segmentation/<series>/sequence/` layout.
 
 ## Purpose
 
