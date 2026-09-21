@@ -132,7 +132,7 @@ def runOverwriteSaveSmokeTest():
         ):
             raise AssertionError("The temporary edit was not detected before saving.")
 
-        savedManifestPath, backupFolder = logic.overwriteSegmentationSequenceSourceFiles(
+        savedManifestPath = logic.overwriteSegmentationSequenceSourceFiles(
             segmentationSequenceNode,
             imageSequenceNode,
             browserNode,
@@ -154,18 +154,12 @@ def runOverwriteSaveSmokeTest():
             raise AssertionError("Overwrite save changed the original frame filenames.")
         if len(savedFramePaths) != frameCount:
             raise AssertionError("Overwrite save left an extra medical image in sequence/.")
-        if not os.path.isdir(backupFolder):
-            raise AssertionError("Overwrite save did not create a backup folder.")
-        for sourcePath in temporarySourcePaths:
-            backupPath = os.path.join(backupFolder, os.path.basename(sourcePath))
-            if not os.path.isfile(backupPath):
-                raise AssertionError("A source frame is missing from the backup.")
-            with open(backupPath, "rb") as fp:
-                if fp.read() != originalBytes[sourcePath]:
-                    raise AssertionError("A backed-up source frame does not match the original.")
-        for sentinelName in ["labels.csv", "manifest.csv"]:
-            if not os.path.isfile(os.path.join(backupFolder, sentinelName)):
-                raise AssertionError("The old {0} was not backed up.".format(sentinelName))
+        backupFolders = [
+            name for name in os.listdir(temporaryMaskFolder)
+            if name.startswith("backup_") and os.path.isdir(os.path.join(temporaryMaskFolder, name))
+        ]
+        if backupFolders:
+            raise AssertionError("Overwrite save unexpectedly created a backup folder.")
 
         sourcePngPath = os.path.join(
             os.path.dirname(sourceMaskFolder),
@@ -203,8 +197,8 @@ def runOverwriteSaveSmokeTest():
             expectedPath = temporarySourcePaths[frameIndex]
             if row["source_mask_path"] != expectedPath or row["mask_path"] != expectedPath:
                 raise AssertionError("The rewritten manifest does not point to the source file.")
-            if not os.path.isfile(row["backup_mask_path"]):
-                raise AssertionError("The rewritten manifest has an invalid backup path.")
+            if row["backup_mask_path"]:
+                raise AssertionError("The rewritten manifest unexpectedly contains a backup path.")
             if row["cardiac_phase_confirmed"] != "1":
                 raise AssertionError("The rewritten manifest lost ED/ES confirmation.")
         if sum(row["cardiac_phase"] == "ED" for row in manifestRows) != 1:

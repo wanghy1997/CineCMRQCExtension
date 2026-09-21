@@ -95,12 +95,12 @@ CineCMRQCExtension-0.3.0/
 2. 点击 `扫描并自动加载`。
 3. 检查 MRI 与 Mask 对齐并逐帧修改。
 4. 检查自动 ED/ES；低置信度或极低置信度结果必须重点复核，必要时手工指定。
-5. 点击 `确认当前 Series 的 ED / ES`。
+5. 点击 `确认当前 Series 的 ED/ES`。
 6. 在顶部填写患者 EF；没有可靠 EF 时保持未填写。
 7. 点击带当前 Series ID 的保存按钮。
 8. 保存成功后再切换到下一个 Series。
 
-保存会覆盖当前 Series 原来的 25 个逐帧 Mask，并在 `sequence/backup_<时间戳>/` 自动备份。按钮只保存其文字中显示的当前 Series。
+保存会直接覆盖当前 Series 原来的逐帧 Mask，不创建备份目录。按钮只保存其文字中显示的当前 Series。
 
 患者根目录会生成 `cine_cmr_qc_review.json`，记录全部 Series、ED/ES 面积、人工修改帧、修改比例、保存历史和患者 EF。
 
@@ -113,7 +113,7 @@ CineCMRQCExtension-0.3.0/
 3. 修改一帧不会影响其他帧；
 4. 未确认 ED/ES 时无法切换；
 5. 未保存修改会触发保存提示；
-6. 保存后原文件有备份，重新加载仍保留修改；
+6. 保存后重新加载仍保留修改；
 7. `cine_cmr_qc_review.json` 可正常读取。
 
 ## 9. 常见问题

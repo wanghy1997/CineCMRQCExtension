@@ -4,7 +4,7 @@
 
 启动入口：`<扩展目录>/scripts/launch-cine-cmr-qc.command /path/to/test-patient`
 
-自动化测试中的覆盖保存只针对临时副本，不会写真实患者目录。人工测试真实覆盖前，先确认当前 series、mask 对齐和自动填写的 `sequence/` 路径正确；插件会在该目录内自动建立时间戳备份。若只想测试另存导出，请把输出目录改为独立临时目录，例如桌面的 `CineCMRQC_Acceptance_Output`。
+自动化测试中的覆盖保存只针对临时副本，不会写真实患者目录。人工测试真实覆盖前，先确认当前 series、mask 对齐和自动填写的 `sequence/` 路径正确；当前版本直接覆盖原 Mask，不创建备份目录。若只想测试另存导出，请把输出目录改为独立临时目录，例如桌面的 `CineCMRQC_Acceptance_Output`。
 
 ## A. 启动与数据识别
 
@@ -46,7 +46,7 @@
 - [ ] 跳转到 ED 时 ED 按钮处于按下状态；跳转到 ES 时 ES 按钮处于按下状态。
 - [ ] 未取消原 ED/ES 标记时，不能直接在另一帧替换，并提示先取消原帧。
 - [ ] 原帧取消后，可以在新帧指定；人工修改后来源显示为医生指定。
-- [ ] 点击 `确认当前 Series 的 ED / ES` 后显示已确认，同时保存状态变成未保存。
+- [ ] 点击 `确认当前 Series 的 ED/ES` 后显示已确认，同时保存状态变成未保存。
 - [ ] ED/ES 未确认时切换 Series 被阻止；确认后但未保存时，切换弹出立即保存提示。
 - [ ] 取消保存或保存失败后仍停留在当前 Series；保存成功后才进入目标 Series。
 
@@ -70,16 +70,16 @@
 ## G. 保存与导出
 
 - [ ] 自动加载 series 后，输出目录默认等于该 series 的原 `segmentation/<series>/sequence/` 路径。
-- [ ] 简洁模式按钮显示当前 Series ID，例如 `保存当前 Series：series0015-Body（覆盖原 Mask 并备份）`。
+- [ ] 简洁模式按钮显示当前 Series ID，例如 `保存当前 Series：series0015-Body`。
 - [ ] 保存按钮只保存按钮上显示的当前 Series，不会顺带写入其他未保存 Series。
 - [ ] 覆盖保存后，原 25 个逐帧 NIfTI 文件名不变，且 `sequence/` 顶层没有多出第 26 个医学影像文件。
-- [ ] `sequence/backup_<时间戳>/` 保存覆盖前的逐帧文件；提示框给出的备份路径真实存在。
+- [ ] 覆盖保存不创建 `sequence/backup_<时间戳>/` 目录。
 - [ ] 父目录的 `<series>_seg.nii.gz` 更新为 25 帧 4D 汇总；`labels.csv` 和 `manifest.csv` 位于 `sequence/`。
 - [ ] 保存完成后“已修改帧数”归零，重新加载结果仍保留医生改动。
 - [ ] 改到其他输出目录时，另存导出生成 25 个逐帧 NIfTI、一个 4D NIfTI、`labels.csv` 和 `manifest.csv`，不覆盖原文件。
 - [ ] `manifest.csv` 包含 `reviewed`、`corrected`、`reviewer`、`review_timestamp`、`review_comment`、方向判定和实际变换。
 - [ ] `manifest.csv` 仅有一行标记 `cardiac_phase=ED`、一行标记 `cardiac_phase=ES`，并包含来源、确认状态与确认时间。
-- [ ] 覆盖保存的 `manifest.csv` 中 `source_mask_path`、`mask_path` 指向更新后的原文件，`backup_mask_path` 指向覆盖前备份。
+- [ ] 覆盖保存的 `manifest.csv` 中 `source_mask_path`、`mask_path` 指向更新后的原文件，`backup_mask_path` 为空。
 - [ ] 患者 JSON 中当前 Series 记录 ED/ES 帧号、像素数和 `area_mm2`。
 - [ ] 无人工修改的 Series 使用首次打开时间作为默认 `last_modified_at`，来源为 `series-opened-default`。
 - [ ] 有人工修改后，JSON 记录本次及累计修改帧数、帧号、修改比例、保存时间和 `save_history`。

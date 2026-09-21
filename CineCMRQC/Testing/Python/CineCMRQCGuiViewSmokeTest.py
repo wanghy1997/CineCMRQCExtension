@@ -95,7 +95,7 @@ def runGuiViewSmokeTest():
         selectedEntry["mask_path"]
     ):
         raise AssertionError("The export path does not default to the loaded mask folder.")
-    expectedSaveButtonText = "保存当前 Series：{0}（覆盖原 Mask 并备份）".format(
+    expectedSaveButtonText = "保存当前 Series：{0}".format(
         seriesId
     )
     if str(widget.exportButton.text) != expectedSaveButtonText:

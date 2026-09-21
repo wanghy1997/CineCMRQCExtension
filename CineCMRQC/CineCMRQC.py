@@ -128,7 +128,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildPatientSection(self):
         self.patientSection = ctk.ctkCollapsibleButton()
-        self.patientSection.text = "1. 选择患者与动态 Series"
+        self.patientSection.text = "1. 患者数据加载"
         self.patientSection.collapsed = False
         self.layout.addWidget(self.patientSection)
         form = qt.QFormLayout(self.patientSection)
@@ -156,20 +156,6 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.patientSummaryLabel.wordWrap = True
         form.addRow("数据概况：", self.patientSummaryLabel)
 
-        self.patientEfSpinBox = qt.QDoubleSpinBox()
-        self.patientEfSpinBox.minimum = -1.0
-        self.patientEfSpinBox.maximum = 100.0
-        self.patientEfSpinBox.decimals = 1
-        self.patientEfSpinBox.singleStep = 1.0
-        self.patientEfSpinBox.specialValueText = "未填写"
-        self.patientEfSpinBox.suffix = " %"
-        self.patientEfSpinBox.value = -1.0
-        self.patientEfSpinBox.toolTip = (
-            "患者级射血分数由医生录入；独立单层 Series 不用于自动计算临床 EF。"
-        )
-        self.patientEfSpinBox.editingFinished.connect(self.onPatientEfChanged)
-        form.addRow("射血分数 EF：", self.patientEfSpinBox)
-
         self.patientSeriesComboBox = qt.QComboBox()
         self.patientSeriesComboBox.currentIndexChanged.connect(
             self._onPatientSeriesSelectionChanged
@@ -193,7 +179,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.nextUnreviewedSeriesButton.clicked.connect(self.onLoadNextUnreviewedSeries)
         form.addRow("", self.nextUnreviewedSeriesButton)
 
-        self.patientReviewProgressLabel = qt.QLabel("患者审核进度：0/0 帧")
+        self.patientReviewProgressLabel = qt.QLabel("进度：0/0 帧 | Series：0/0")
         form.addRow("审核进度：", self.patientReviewProgressLabel)
 
         self.syncPatientSeriesCheckBox = qt.QCheckBox("切换 Series 时保持 TriggerTime")
@@ -292,7 +278,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildWorkflowSection(self):
         self.workflowSection = ctk.ctkCollapsibleButton()
-        self.workflowSection.text = "2. 播放与逐帧定位"
+        self.workflowSection.text = "2. Segment Editor"
         self.layout.addWidget(self.workflowSection)
         form = qt.QFormLayout(self.workflowSection)
 
@@ -344,8 +330,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         form.addRow("进度：", self.reviewProgressLabel)
         self._registerAdvancedField(form, self.reviewProgressLabel)
 
-        self.correctedStateLabel = qt.QLabel("当前帧已修改：否")
-        form.addRow("修改状态：", self.correctedStateLabel)
+        self.correctedStateLabel = qt.QLabel("否")
+        form.addRow("是否修改：", self.correctedStateLabel)
 
         self.reviewMetadataLabel = qt.QLabel("当前帧暂无审核记录。")
         self.reviewMetadataLabel.wordWrap = True
@@ -383,7 +369,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildCardiacPhaseSection(self):
         self.cardiacPhaseSection = ctk.ctkCollapsibleButton()
-        self.cardiacPhaseSection.text = "3. 确认舒张末期与收缩末期"
+        self.cardiacPhaseSection.text = "3. 确认舒张末期和收缩末期"
         self.cardiacPhaseSection.collapsed = False
         self.layout.addWidget(self.cardiacPhaseSection)
         form = qt.QFormLayout(self.cardiacPhaseSection)
@@ -426,9 +412,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         jumpRow.addWidget(self.jumpToEndSystolicButton)
         form.addRow("定位：", jumpRow)
 
-        self.confirmCardiacPhasesButton = qt.QPushButton("确认当前 Series 的 ED / ES")
+        self.confirmCardiacPhasesButton = qt.QPushButton("确认当前 Series 的 ED/ES")
         self.confirmCardiacPhasesButton.clicked.connect(self.onConfirmCardiacPhases)
-        form.addRow("", self.confirmCardiacPhasesButton)
 
         self.annotationNotRequiredButton = qt.QPushButton("当前 Series 无需标注")
         self.annotationNotRequiredButton.checkable = True
@@ -438,7 +423,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.annotationNotRequiredButton.toggled.connect(
             self.onAnnotationNotRequiredToggled
         )
-        form.addRow("医生决定：", self.annotationNotRequiredButton)
+        decisionRow = qt.QHBoxLayout()
+        decisionRow.addWidget(self.confirmCardiacPhasesButton)
+        decisionRow.addWidget(self.annotationNotRequiredButton)
+        form.addRow("医生决定：", decisionRow)
 
         self.cardiacPhaseConfirmationLabel = qt.QLabel("状态：待医生确认")
         self.cardiacPhaseConfirmationLabel.wordWrap = True
@@ -455,7 +443,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildExportSection(self):
         self.exportSection = ctk.ctkCollapsibleButton()
-        self.exportSection.text = "5. 保存当前 Series"
+        self.exportSection.text = "5. 保存"
         self.layout.addWidget(self.exportSection)
         form = qt.QFormLayout(self.exportSection)
 
@@ -468,7 +456,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         form.addRow("文件前缀：", self.exportPrefixEdit)
         self._registerAdvancedField(form, self.exportPrefixEdit)
 
-        self.exportButton = qt.QPushButton("保存当前 Series（覆盖原 Mask 并备份）")
+        self.exportButton = qt.QPushButton("保存")
         self.exportButton.clicked.connect(self.onExportMasks)
         form.addRow("", self.exportButton)
 
@@ -712,14 +700,9 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         if not hasattr(self, "exportButton"):
             return
         seriesId = self._currentSeriesId()
-        if self.simpleModeCheckBox.checked:
-            self.exportButton.text = (
-                "保存当前 Series：{0}（覆盖原 Mask 并备份）".format(seriesId)
-                if seriesId
-                else "保存当前 Series（覆盖原 Mask 并备份）"
-            )
-        else:
-            self.exportButton.text = "导出当前 Series 到指定目录"
+        self.exportButton.text = (
+            "保存当前 Series：{0}".format(seriesId) if seriesId else "保存"
+        )
         state = self._seriesSaveState(self.segmentationSequenceNode)
         if hasattr(self, "seriesSaveStateLabel"):
             self.seriesSaveStateLabel.text = (
@@ -750,31 +733,22 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
             else "当前 Series 无需标注"
         )
 
-        def sourceText(source):
-            return {
-                "automatic-mask-cavity-extrema": "自动初判",
-                "automatic-contour-convex-hull-extrema": "轮廓凸包低置信度初判",
-                "automatic-temporal-opposition": "时间位置极低置信度初判",
-                "manual": "医生指定",
-                "restored": "已恢复",
-                "unavailable": "无法自动判断",
-            }.get(source, source or "未指定")
-
-        def frameText(frameIndex, source):
+        def frameText(frameIndex):
             if frameIndex < 0:
                 return "未指定"
-            return "第 {0}/{1} 帧（{2}）".format(
+            return "第 {0}/{1} 帧".format(
                 frameIndex + 1,
                 frameCount,
-                sourceText(source),
             )
 
+        phaseStateLabel = "已确认" if state["confirmed"] else "初判"
         self.cardiacPhaseSummaryLabel.text = (
             "医生决定：当前 Series 无需标注；ED / ES 不适用。"
             if annotationNotRequired
-            else "舒张末期 ED：{0}\n收缩末期 ES：{1}".format(
-                frameText(state["ed_frame"], state["ed_source"]),
-                frameText(state["es_frame"], state["es_source"]),
+            else "ED: {0}（{2}）｜ES: {1}（{2}）".format(
+                frameText(state["ed_frame"]),
+                frameText(state["es_frame"]),
+                phaseStateLabel,
             )
         )
         self.updatingCardiacPhaseControls = True
@@ -802,26 +776,16 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         self.confirmCardiacPhasesButton.text = (
             "ED / ES 已确认"
             if state["confirmed"]
-            else "确认当前 Series 的 ED / ES"
+            else "确认当前 Series 的 ED/ES"
         )
         if annotationNotRequired:
             self.cardiacPhaseConfirmationLabel.text = (
                 "已保存“无需标注”决定，可直接进入下一个 Series。"
             )
         elif state["confirmed"]:
-            self.cardiacPhaseConfirmationLabel.text = "已由医生确认，时间：{0}".format(
-                state["confirmed_at"]
-            )
-        elif state["confidence"] in ["low", "very-low"]:
-            self.cardiacPhaseConfirmationLabel.text = (
-                "待医生确认；当前为{0}置信度初判，请重点复核后再保存。".format(
-                    "低" if state["confidence"] == "low" else "极低"
-                )
-            )
+            self.cardiacPhaseConfirmationLabel.text = "已确认"
         else:
-            self.cardiacPhaseConfirmationLabel.text = (
-                "待医生确认；切换 Series 前必须完成确认并保存。"
-            )
+            self.cardiacPhaseConfirmationLabel.text = "待医生确认"
 
     def onCardiacPhaseToggled(self, phase, checked):
         if self.updatingCardiacPhaseControls:
@@ -1057,28 +1021,14 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                         "annotation_decision",
                         "required" if entry["mask_frame_count"] else "undecided",
                     )
-                self.updatingPatientEfControl = True
-                try:
-                    efValue = patientAudit.get("ejection_fraction_percent")
-                    self.patientEfSpinBox.value = (
-                        float(efValue) if efValue is not None else -1.0
-                    )
-                finally:
-                    self.updatingPatientEfControl = False
                 self.patientSeriesEntries = [
                     entry for entry in scanResult["series"] if entry["load_eligible"]
                 ]
                 self._refreshPatientSeriesList(False)
-                self.patientSummaryLabel.text = (
-                    "全部：{0} | 已发现：{1} | 可加载：{2} | "
-                    "不可加载：{3} | 需处理：{4} | 历史左右纠正：{5}"
-                ).format(
+                self.patientSummaryLabel.text = "全部：{0} | 可加载：{1} | 需处理：{2}".format(
                     scanResult["total_count"],
-                    scanResult["selected_count"],
                     scanResult["ready_count"],
-                    scanResult["excluded_count"],
                     scanResult["attention_count"],
-                    scanResult["legacy_lr_count"],
                 )
                 self._log("患者目录扫描完成。{0}".format(self.patientSummaryLabel.text))
                 readyIndices = [
@@ -1193,22 +1143,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 )
             ):
                 completedSeriesCount += 1
-            displayText = (
-                "{0} | 参考帧 {1} | Mask {2}/{3} | 已审核 {4}/{3} | "
-                "已修改 {5}/{3} | {6} | 保存：{7} | {8} | {9}"
-            ).format(
+            displayText = "{0}|已审核 {1}/{2}".format(
                 entry["series_id"],
-                referenceText,
-                entry["mask_frame_count"],
-                entry["image_frame_count"],
                 reviewedCount,
-                correctedCount,
-                self._statusDisplayText(entry["status"]),
-                phaseSaveState,
-                self._orientationDisplayText(entry["mask_orientation"]),
-                self._annotationDecisionDisplayText(
-                    entry.get("annotation_decision", "undecided")
-                ),
+                entry["image_frame_count"],
             )
             self.patientSeriesComboBox.addItem(displayText)
         if self.patientSeriesEntries:
@@ -1216,9 +1154,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 max(0, min(selectedIndex, len(self.patientSeriesEntries) - 1))
             )
         self.updatingPatientSeriesComboBox = False
-        self.patientReviewProgressLabel.text = (
-            "患者审核进度：{0}/{1} 帧 | 已完成 Series：{2}/{3}"
-        ).format(
+        self.patientReviewProgressLabel.text = "进度：{0}/{1} 帧 | Series：{2}/{3}".format(
             reviewedFrameCount,
             totalFrameCount,
             completedSeriesCount,
@@ -1583,7 +1519,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                 self.exportPrefixEdit.text = entry["series_id"] + "_corrected"
                 self.exportPathEdit.currentPath = entry["mask_path"]
                 self.exportPathEdit.toolTip = (
-                    "默认写回加载时的 Mask 目录。保存前会自动备份原始文件。"
+                    "默认直接覆盖写回加载时的 Mask 目录。"
                 )
                 self.logic.showSegmentationSequence(segmentationSequenceNode, browserNode)
                 if sourceIndexValue is not None:
@@ -2148,15 +2084,13 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                     sourceMaskFolder
                     and os.path.abspath(outputFolder) == os.path.abspath(sourceMaskFolder)
                 ):
-                    manifestPath, backupFolder = (
-                        self.logic.overwriteSegmentationSequenceSourceFiles(
-                            self.segmentationSequenceNode,
-                            self.imageSequenceNode,
-                            self.sequenceBrowserNode,
-                            outputFolder,
-                        )
+                    manifestPath = self.logic.overwriteSegmentationSequenceSourceFiles(
+                        self.segmentationSequenceNode,
+                        self.imageSequenceNode,
+                        self.sequenceBrowserNode,
+                        outputFolder,
                     )
-                    self._log("原 Mask 已覆盖；备份目录：{0}".format(backupFolder))
+                    self._log("原 Mask 已覆盖。")
                     self.segmentationSequenceNode.SetAttribute(
                         "CineCMRQC.MaskMayBeDirty",
                         "0",
@@ -2180,10 +2114,8 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
                     )
                     if showSuccess:
                         slicer.util.infoDisplay(
-                            "{0} 保存完成。\n\n原文件已备份到：\n{1}\n\n"
-                            "Series 记录：\n{2}\n\n患者 JSON：\n{3}".format(
+                            "{0} 保存完成。\n\nSeries 记录：\n{1}\n\n患者 JSON：\n{2}".format(
                                 self._currentSeriesId(),
-                                backupFolder,
                                 manifestPath,
                                 auditPath or "写入失败，请查看错误提示",
                             )
@@ -2366,11 +2298,10 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
         else:
             self.reviewMetadataLabel.text = "当前帧暂无审核记录。"
         self.reviewProgressLabel.text = "已审核：{0}/{1}".format(reviewedCount, total)
-        self.correctedStateLabel.text = "当前帧已修改：{0}".format(
-            "是" if currentCorrected else "否"
+        self.correctedStateLabel.text = "是" if currentCorrected else "否"
+        self.statusLabel.text = "MRI：{0}｜Mask：{1}｜帧：{2}/{3}".format(
+            imageName, maskName, selected + 1 if total else 0, total
         )
-        self.statusLabel.text = "序列：{0} | 帧：{1}/{2} | MRI：{3} | Mask：{4}".format(
-            browser.GetName(), selected + 1 if total else 0, total, imageName, maskName)
         self._refreshCardiacPhaseControls()
         self._updateSaveControls()
 
@@ -4959,19 +4890,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
         )
         manifestPath = os.path.join(outputFolder, "manifest.csv")
         labelsPath = os.path.join(outputFolder, "labels.csv")
-        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        backupFolder = os.path.join(outputFolder, "backup_" + timestamp)
-        suffix = 1
-        while os.path.exists(backupFolder):
-            backupFolder = os.path.join(
-                outputFolder,
-                "backup_{0}_{1}".format(timestamp, suffix),
-            )
-            suffix += 1
         temporaryFolder = tempfile.mkdtemp(prefix=".cinecmrqc-save-", dir=outputFolder)
-        backupByTarget = {}
-        targets = list(sourcePaths) + [summaryPath, labelsPath, manifestPath]
-        originallyExisting = set(path for path in targets if os.path.exists(path))
         try:
             temporaryManifestPath = self.exportSegmentationSequenceAsLabelmaps(
                 segmentationSequenceNode,
@@ -4996,14 +4915,6 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
             if not os.path.isfile(generatedSummaryPath):
                 raise ValueError("临时 4D Mask 导出失败，已取消覆盖。")
 
-            os.makedirs(backupFolder)
-            for targetPath in targets:
-                if not os.path.isfile(targetPath):
-                    continue
-                backupPath = os.path.join(backupFolder, os.path.basename(targetPath))
-                shutil.copy2(targetPath, backupPath)
-                backupByTarget[targetPath] = backupPath
-
             for generatedPath, sourcePath in zip(generatedFramePaths, sourcePaths):
                 os.replace(generatedPath, sourcePath)
             os.replace(generatedSummaryPath, summaryPath)
@@ -5021,7 +4932,7 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 sourcePath = sourcePaths[frameIndex]
                 row["source_mask_path"] = sourcePath
                 row["mask_path"] = sourcePath
-                row["backup_mask_path"] = backupByTarget.get(sourcePath, "")
+                row["backup_mask_path"] = ""
             replacementManifestPath = os.path.join(
                 temporaryFolder,
                 "manifest_rewritten.csv",
@@ -5038,10 +4949,6 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 "saved-source-files",
             )
             segmentationSequenceNode.SetAttribute(
-                "CineCMRQC.LastSaveBackupFolder",
-                backupFolder,
-            )
-            segmentationSequenceNode.SetAttribute(
                 "CineCMRQC.SourceMaskOrientation",
                 "aligned",
             )
@@ -5050,14 +4957,8 @@ class CineCMRQCLogic(ScriptedLoadableModuleLogic):
                 "none",
             )
             self.markCardiacPhaseStateSaved(segmentationSequenceNode)
-            return manifestPath, backupFolder
+            return manifestPath
         except Exception:
-            for targetPath in targets:
-                backupPath = backupByTarget.get(targetPath)
-                if backupPath and os.path.isfile(backupPath):
-                    shutil.copy2(backupPath, targetPath)
-                elif targetPath not in originallyExisting and os.path.isfile(targetPath):
-                    os.remove(targetPath)
             raise
         finally:
             shutil.rmtree(temporaryFolder, ignore_errors=True)
