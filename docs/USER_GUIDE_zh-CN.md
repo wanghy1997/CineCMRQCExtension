@@ -145,7 +145,7 @@ masks/
 
 ### 约定患者目录的直接加载方式
 
-对于当前项目约定的患者目录，使用插件最上方的 `1. 患者数据加载`：
+对于当前项目约定的患者目录，使用插件最上方的 `1. 数据加载`：
 
 1. 保持默认勾选 `简洁模式`。
 2. 在 `患者目录` 选择患者根目录，不要选择其中某个 `seriesXXXX-Body`。
@@ -245,7 +245,7 @@ masks/
 3. 鼠标位于切片视图上时，直接滚动滚轮即可切换上一帧或下一帧，不需要按任何键；从首帧向前滚会回到末帧，从末帧向后滚会回到首帧。
 4. `Command + 滚轮`（macOS）或 `Ctrl + 滚轮`（Windows）仍由 Slicer 用于缩放，不会触发时间切帧。无修饰键滚轮只在单层 Cine Series 且当前模块为 `Cine CMR QC` 时接管，多层 3D 图像仍保留原生层面滚动。
 5. macOS 按 `Command+D` 可随时激活 `Paint`，按 `Command+F` 激活 `Erase`；Windows 对应 `Ctrl+D` 和 `Ctrl+F`。快捷键只在当前模块为 `Cine CMR QC` 时生效。
-6. 在 `Embedded Segment Editor` 中选择 `LV`、`MYO` 或 `RV`。
+6. 在 `分割修正` 中选择 `LV`、`MYO` 或 `RV`。
 7. 使用 Slicer 原生的 `Paint`、`Erase`、`Draw`、`Smoothing` 等工具修改当前帧。
 8. 修改完成后切换到下一帧。Sequence Browser 会把修改写回当前 segmentation sequence 项。
 9. 简洁模式只保留修改状态。需要审核元数据时取消勾选 `简洁模式`。
@@ -273,7 +273,7 @@ masks/
 
    `绑定正常：MRI N 帧，Mask N 帧，已启用逐帧修改保存。`
 
-## 8. 确认舒张末期和收缩末期
+## 8. 时相确认
 
 患者目录工作流会为每个 Series 给出两个初步关键帧：
 

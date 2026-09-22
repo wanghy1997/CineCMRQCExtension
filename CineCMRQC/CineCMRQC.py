@@ -128,7 +128,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildPatientSection(self):
         self.patientSection = ctk.ctkCollapsibleButton()
-        self.patientSection.text = "1. 患者数据加载"
+        self.patientSection.text = "1. 数据加载"
         self.patientSection.collapsed = False
         self.layout.addWidget(self.patientSection)
         form = qt.QFormLayout(self.patientSection)
@@ -278,7 +278,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildWorkflowSection(self):
         self.workflowSection = ctk.ctkCollapsibleButton()
-        self.workflowSection.text = "2. Segment Editor"
+        self.workflowSection.text = "2. 影像预览"
         self.layout.addWidget(self.workflowSection)
         form = qt.QFormLayout(self.workflowSection)
 
@@ -355,7 +355,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildEmbeddedSegmentEditorSection(self):
         self.editorSection = ctk.ctkCollapsibleButton()
-        self.editorSection.text = "4. 逐帧修改 Mask"
+        self.editorSection.text = "4. 分割修正"
         self.editorSection.collapsed = False
         self.layout.addWidget(self.editorSection)
         layout = qt.QVBoxLayout(self.editorSection)
@@ -369,7 +369,7 @@ class CineCMRQCWidget(ScriptedLoadableModuleWidget):
 
     def _buildCardiacPhaseSection(self):
         self.cardiacPhaseSection = ctk.ctkCollapsibleButton()
-        self.cardiacPhaseSection.text = "3. 确认舒张末期和收缩末期"
+        self.cardiacPhaseSection.text = "3. 时相确认"
         self.cardiacPhaseSection.collapsed = False
         self.layout.addWidget(self.cardiacPhaseSection)
         form = qt.QFormLayout(self.cardiacPhaseSection)
